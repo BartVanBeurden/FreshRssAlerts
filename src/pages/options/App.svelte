@@ -97,10 +97,10 @@
 <script>
 
     import { onMount } from 'svelte';
-    import SettingsApi from '../../shared/SettingsApi';
-    import FreshRssApi from '../../shared/FreshRssApi';
 
-    const settingsApi = new SettingsApi();
+    export let appSettingsService;
+    export let serverSettingsService;
+    export let freshRssService;
 
     let serverSettings = false;
     let appSettings = false;
@@ -108,26 +108,26 @@
     let connectionStatus = "";
     let loginStatus = "";
 
-    $: serverSettings && settingsApi.saveServerSettings(serverSettings);
-    $: appSettings && settingsApi.saveAppSettings(appSettings);
+    $: serverSettings && serverSettingsService.save(serverSettings);
+    $: appSettings && appSettingsService.save(appSettings);
 
     async function testConnection() {
         connectionStatus = "Testing...";
-        const result = await new FreshRssApi(serverSettings).testConnection();
+        const result = await freshRssService.testConnection();
         const status = result.success ? "Pass" : "Error";
         connectionStatus = `${status}: ${result.status} ${result.statusText}`;
     };
 
     async function testLogin() {
         loginStatus = "Testing...";
-        const result = await new FreshRssApi(serverSettings).testAuthentication();
+        const result = await freshRssService.testAuthentication();
         const status = result.success ? "Pass": "Error";
         loginStatus = `${status}: ${result.status} ${result.statusText}`;
     }
 
     onMount(async () => {
-        serverSettings = await settingsApi.loadServerSettings();
-        appSettings = await settingsApi.loadAppSettings();
+        serverSettings = await serverSettingsService.load();
+        appSettings = await appSettingsService.load();
     });
 
 </script>

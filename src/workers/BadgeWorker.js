@@ -1,18 +1,14 @@
-import FreshRssApi from '../shared/FreshRssApi';
+import RefreshBadgeAction from '../shared/actions/RefreshBadgeAction';
 
 export default class BadgeWorker {
 
-    constructor(settingsApi) {
-        this.settingsApi = settingsApi;
+    constructor(freshRssService) {
+        this.freshRssService = freshRssService;
+        this.refreshBadgeAction = new RefreshBadgeAction(freshRssService);
     }
 
     async refresh() {
-        const serverSettings = await this.settingsApi.loadServerSettings();
-        const freshRssApi = new FreshRssApi(serverSettings);
-        const count = await freshRssApi.getUnreadCount();
-        const text = Math.min(count, 999).toString();
-
-        browser.browserAction.setBadgeText({ text });
+        this.refreshBadgeAction.run();
     }
 
 };

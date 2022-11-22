@@ -13,7 +13,7 @@
             <div class="header">
                 <button class="title nowrap" title={article.title} on:click={() => openArticle(article)}>{article.title}</button>
                 <div class="controls">
-                    <button class="icon" title="Mark as read" on:click={() => markArticleAsRead(article)}>&#xe9ce;</button>
+                    <button class="icon" title="Mark as read" on:click={() => readArticle(article)}>&#xe9ce;</button>
                 </div>
             </div>
             <div class="meta">
@@ -147,14 +147,21 @@
 <script>
 
     import { onMount } from 'svelte';
-    import SettingsApi from "../../shared/SettingsApi";
-    import FreshRssApi from "../../shared/FreshRssApi";
+    import { getArticleFavicon } from '../../shared/utils';
+    import OpenArticleAction from '../../shared/actions/OpenArticleAction';
+    import ReadArticleAction from '../../shared/actions/ReadArticleAction';
+    
+    export let freshRssService;
+    export let appSettingsService;
+    export let serverSettingsService;
     
     let isMounted = false;
     let serverSettings = false;
     let appSettings = false;
-    let freshRssApi = false;
     let articles = [];
+
+    $: openArticleAction = new OpenArticleAction(appSettingsService, freshRssService);
+    $: readArticleAction = new ReadArticleAction(freshRssService);
 
     async function openHomepage() {
         window.open(serverSettings.url);
@@ -163,45 +170,21 @@
 
     async function refreshArticles() {
         articles = [];
-        articles = await freshRssApi.getArticles({
+        articles = await freshRssService.getArticles({
             count: appSettings.articleCount,
             unread: true
         });
     };
 
     async function openArticle(article) {
-        const source = article.canonical[0] || article.alternate[0];
-        window.open(source.href);
         if (appSettings.markAsRead) {
-            await markArticleAsRead(article);
+            articles = articles.filter(x => x != article);
         }
-    };
-
-    async function markArticleAsRead(article) {
-        const oldArticles = articles;
-        articles = articles.filter(x => x != article);
-
-        // restore the old articles if the server-side operation failed
-        if (!await freshRssApi.markArticleAsRead(article.id)) {
-            articles = oldArticles;
-            return;
-        }
-
-        // Do a hard refresh if we drop below half the article count
-        if (articles.length < appSettings.articleCount / 2) {
-            await refreshArticles();
-        }
-    };
-
-    function getArticleUrl(article) {
-        const source = article.canonical[0] || article.alternate[0];
-        return source.href;
+        await openArticleAction.run(article);
     }
 
-    function getArticleFavicon(article) {
-        const href = getArticleUrl(article);
-        const url = new URL(href);
-        return `${url.origin}/favicon.ico`;
+    async function readArticle(article) {
+        await readArticleAction.run(article);
     }
 
     function stripHtml(text) {
@@ -211,11 +194,8 @@
     }
 
     onMount(async () => {
-        const settingsApi = new SettingsApi();
-
-        serverSettings = await settingsApi.loadServerSettings();
-        appSettings = await settingsApi.loadAppSettings();
-        freshRssApi = new FreshRssApi(serverSettings);
+        serverSettings = await serverSettingsService.load();
+        appSettings = await appSettingsService.load();
 
         refreshArticles();
 

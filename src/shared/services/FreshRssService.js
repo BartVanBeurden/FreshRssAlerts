@@ -1,12 +1,18 @@
 const tags = {
     read: "user/-/state/com.google/read",
     star: "user/-/state/com.google/starred"
-}
+};
 
-export default class FreshRssApi {
+export default class FreshRssService {
 
-    constructor(options) {
-        this.options = options;
+    constructor(serverSettingsService) {
+        this.serverSettingsService = serverSettingsService;
+        this.reset();
+        this.serverSettingsService.addListener("change", () => this.reset());
+    }
+
+    reset() {
+        this.options = null;
         this.auth = null;
         this.token = null;
     }
@@ -20,6 +26,8 @@ export default class FreshRssApi {
     }
 
     async testConnection() {
+        await this.initialize();
+
         const response = await fetch(this.baseUrl);
 
         return {
@@ -30,6 +38,8 @@ export default class FreshRssApi {
     }
 
     async testAuthentication() {
+        await this.initialize();
+
         const response = await fetch(this.authUrl);
         const val = this.getAuthValue(await response.text());
 
@@ -40,7 +50,15 @@ export default class FreshRssApi {
         };
     }
 
+    async initialize() {
+        if (this.options == null) {
+            this.options = await this.serverSettingsService.load();
+        }
+    }
+
     async authenticate() {
+        await this.initialize();
+
         if (this.auth == null) {
             const response = await fetch(this.authUrl);
             this.auth = this.getAuthValue(await response.text());
@@ -49,6 +67,7 @@ export default class FreshRssApi {
 
     async authenticateToken() {
         await this.authenticate();
+
         if (this.token == null) {
             const requestUrl = `${this.baseUrl}/reader/api/0/token`;
             const response = await fetch(requestUrl, { headers: this.getAuthHeaders() });
@@ -106,4 +125,4 @@ export default class FreshRssApi {
         }
     }
 
-}
+};

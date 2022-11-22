@@ -1,7 +1,8 @@
 import svelte from 'rollup-plugin-svelte';
-import json from '@rollup/plugin-json'
-import commonjs from '@rollup/plugin-commonjs'
-import resolve from '@rollup/plugin-node-resolve'
+import json from '@rollup/plugin-json';
+import commonjs from '@rollup/plugin-commonjs';
+import resolve from '@rollup/plugin-node-resolve';
+import nodePolyfills from 'rollup-plugin-polyfill-node';
 
 const production = !process.env.ROLLUP_WATCH;
 
@@ -31,6 +32,7 @@ export default targets.map(target => { return {
 				dev: !production
 			}
 		}),
+		nodePolyfills(),
 		resolve(),
 		commonjs(),
 		json()

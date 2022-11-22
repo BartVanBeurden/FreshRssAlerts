@@ -1,12 +1,14 @@
-import FreshRssApi from '../shared/FreshRssApi';
 import IdSerializer from './IdSerializer';
+import OpenArticleAction from '../shared/actions/OpenArticleAction';
 
 export default class NotificationsWorker {
 
-    constructor(settingsApi) {
-        this.settingsApi = settingsApi;
-        this.idSerializer = new IdSerializer("article");
+    constructor(appSettingsService, freshRssService) {
+        this.appSettingsService = appSettingsService;
+        this.freshRssService = freshRssService;
 
+        this.idSerializer = new IdSerializer("article");
+        this.openArticleAction = new OpenArticleAction(appSettingsService, freshRssService);
         this.date = new Date();
         this.articles = [];
 
@@ -14,10 +16,8 @@ export default class NotificationsWorker {
     }
 
     async refresh() {
-        const serverSettings = await this.settingsApi.loadServerSettings();
-        const freshRssApi = new FreshRssApi(serverSettings);
-
-        this.articles = await freshRssApi.getArticles({
+        
+        this.articles = await this.freshRssService.getArticles({
             unread: true,
             startDate: this.date
         });
@@ -52,10 +52,7 @@ export default class NotificationsWorker {
         if (articleId) {
             const article = this.articles.find(x => x.id == articleId);
             if (article != null) {
-                window.open(article.canonical[0].href);
-                const serverSettings = await this.settingsApi.loadServerSettings();
-                const freshRssApi = new FreshRssApi(serverSettings);
-                await freshRssApi.markArticleAsRead(articleId);
+                this.openArticleAction.run(article);
             }
         }
     }

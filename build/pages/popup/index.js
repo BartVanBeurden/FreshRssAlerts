@@ -418,142 +418,59 @@ class SvelteComponentDev extends SvelteComponent {
     }
     $capture_state() { }
     $inject_state() { }
-}class SettingsApi {
+}const getArticleHref = (article) => {
+    if (article.canonical && article.canonical.length)
+        return article.canonical[0].href;
 
-    constructor() {
-    }
-
-    async loadServerSettings() {
-        return (await browser.storage.local.get({ "server": {
-            url: "localhost",
-            auth: {
-                username: "admin",
-                apiPassword: "test"
-            }
-        }})).server;
-    }
-
-    async saveServerSettings(settings) {
-        await browser.storage.local.set({ "server": settings });
-    }
-
-    async loadAppSettings() {
-        return (await browser.storage.local.get({ "application": {
-            pollingInterval: 10,
-            articleCount: 20,
-            markAsRead: true
-        }})).application;
-    }
-
-    async saveAppSettings(settings) {
-        await browser.storage.local.set({ "application": settings });
-    }
-
-}const tags = {
-    read: "user/-/state/com.google/read",
-    star: "user/-/state/com.google/starred"
+    if (article.alternate && article.alternate.length)
+        return article.alternate[0].href;
+        
+    return "about:blank";
 };
 
-class FreshRssApi {
+const getArticleFavicon = (article) => {
+    const href = getArticleHref(article);
+    const url = new URL(href);
+    return `${url.origin}/favicon.ico`;
+};class RefreshBadgeAction {
 
-    constructor(options) {
-        this.options = options;
-        this.auth = null;
-        this.token = null;
+    constructor(freshRssService) {
+        this.freshRssService = freshRssService;
     }
 
-    get baseUrl() {
-        return `${this.options.url}/api/greader.php`;
+    async run() {
+        const count = await this.freshRssService.getUnreadCount();
+        const text = Math.min(count, 999).toString();
+        browser.browserAction.setBadgeText({ text });
     }
 
-    get authUrl() {
-        return `${this.baseUrl}/accounts/ClientLogin?Email=${encodeURIComponent(this.options.auth.username)}&Passwd=${encodeURIComponent(this.options.auth.apiPassword)}`;
+}class ReadArticleAction {
+
+    constructor(freshRssService) {
+        this.freshRssService = freshRssService;
+        this.refreshBadgeAction = new RefreshBadgeAction(freshRssService);
     }
 
-    async testConnection() {
-        const response = await fetch(this.baseUrl);
-
-        return {
-            success: response.ok,
-            status: response.status,
-            statusText: response.statusText
-        };
+    async run(article) {
+        await this.freshRssService.markArticleAsRead(article.id);
+        await this.refreshBadgeAction.run();
     }
 
-    async testAuthentication() {
-        const response = await fetch(this.authUrl);
-        const val = this.getAuthValue(await response.text());
+}class OpenArticleAction {
 
-        return {
-            success: response.ok && val,
-            status: response.status,
-            statusText: response.statusText
-        };
+    constructor(appSettingsService, freshRssService) {
+        this.appSettingsService = appSettingsService;
+        this.freshRssService = freshRssService;
+        this.readArticleAction = new ReadArticleAction(freshRssService);
     }
 
-    async authenticate() {
-        if (this.auth == null) {
-            const response = await fetch(this.authUrl);
-            this.auth = this.getAuthValue(await response.text());
-        }
-    }
+    async run(article) {
+        window.open(getArticleHref(article));
 
-    async authenticateToken() {
-        await this.authenticate();
-        if (this.token == null) {
-            const requestUrl = `${this.baseUrl}/reader/api/0/token`;
-            const response = await fetch(requestUrl, { headers: this.getAuthHeaders() });
-            const text = await response.text();
-            this.token = text.trim();
-        }
-    }
+        const appSettings = await this.appSettingsService.load();
 
-    async getArticles(options) {
-        await this.authenticate();
-
-        const requestParams = new URLSearchParams();
-        if (options.count) requestParams.append("n", options.count);
-        if (options.unread) requestParams.append("xt", tags.read);
-        if (options.startDate) requestParams.append("ot", Math.round(options.startDate.getTime() / 1000));
-        if (options.endDate) requestParams.append("nt", Math.round(options.endDate.getTime() / 1000));
-
-        const requestUrl = `${this.baseUrl}/reader/api/0/stream/contents/reading-list?${requestParams.toString()}`;
-        const response = await fetch(requestUrl, { headers: this.getAuthHeaders() });
-        const json = await response.json();
-        return json.items;
-    }
-
-    async markArticleAsRead(articleId) {
-        await this.authenticateToken();
-
-        const body = new URLSearchParams();
-        body.append("a", tags.read);
-        body.append("i", articleId);
-        body.append("T", this.token);
-
-        const requestUrl = `${this.baseUrl}/reader/api/0/edit-tag`;
-        const response = await fetch(requestUrl, { method: "POST", headers: this.getAuthHeaders(), body });
-        return response.ok;
-    }
-
-    async getUnreadCount() {
-        await this.authenticate();
-        const requestUrl = `${this.baseUrl}/reader/api/0/unread-count?output=json`;
-        const response = await fetch(requestUrl, { headers: this.getAuthHeaders() });
-        const json = await response.json();
-        return json.max;
-    }
-
-    getAuthValue(text) {
-        const lines = text.split('\n');
-        const auth = lines.find(x => x.startsWith("Auth="));
-        const val = auth.split("=", 2);
-        return val[1];
-    }
-
-    getAuthHeaders() {
-        return {
-            "Authorization": `GoogleLogin auth=${this.auth}`
+        if (appSettings.markAsRead) {
+            await this.readArticleAction.run(article);
         }
     }
 
@@ -561,12 +478,12 @@ class FreshRssApi {
 const file = "src\\pages\\popup\\App.svelte";
 
 function add_css(target) {
-	append_styles(target, "svelte-1a2k4ni", ".app.svelte-1a2k4ni.svelte-1a2k4ni{display:flex;flex-direction:column;width:100%;height:100%;padding:0.5em;max-width:40em;font-size:0.8em}.header.svelte-1a2k4ni.svelte-1a2k4ni{display:flex;flex-direction:row;flex:0 0 auto;padding:0.25em;border-bottom:1px solid #DDD}.main.header.svelte-1a2k4ni.svelte-1a2k4ni{background:#0062BE;color:white}.title.svelte-1a2k4ni.svelte-1a2k4ni{flex:1 1 auto;text-align:left;display:flex;align-items:center;column-gap:0.25em}.title.svelte-1a2k4ni.svelte-1a2k4ni,.origin.svelte-1a2k4ni.svelte-1a2k4ni{font-weight:600}.origin.svelte-1a2k4ni img.svelte-1a2k4ni{height:1em}.controls.svelte-1a2k4ni.svelte-1a2k4ni{flex:0 0 auto}.app-content.svelte-1a2k4ni.svelte-1a2k4ni{display:flex;flex-direction:column;flex:1 1 auto;overflow-y:auto}.article.svelte-1a2k4ni.svelte-1a2k4ni{margin:0.25em;padding:0.25em;border:1px solid #DDD;display:flex;flex-direction:column}.article.svelte-1a2k4ni.svelte-1a2k4ni:hover{background:#EEE}.article.svelte-1a2k4ni>.svelte-1a2k4ni{display:flex;flex-direction:row;padding:0.1em;column-gap:0.5em}.article.svelte-1a2k4ni .meta.svelte-1a2k4ni{font-style:italic;font-size:1em}.article.svelte-1a2k4ni .meta .origin.svelte-1a2k4ni{display:flex;align-items:center;column-gap:0.25em}.article.svelte-1a2k4ni .description.svelte-1a2k4ni{color:#777;font-size:0.8em}.nowrap.svelte-1a2k4ni.svelte-1a2k4ni{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}button.svelte-1a2k4ni.svelte-1a2k4ni{border:0;padding:0;margin:0;font-size:1em;background:transparent;color:inherit;cursor:pointer}button.icon.svelte-1a2k4ni.svelte-1a2k4ni{padding:0em 0.25em}a.svelte-1a2k4ni.svelte-1a2k4ni{color:inherit;text-decoration:none}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiQXBwLnN2ZWx0ZSIsInNvdXJjZXMiOlsiQXBwLnN2ZWx0ZSJdLCJzb3VyY2VzQ29udGVudCI6WyJ7I2lmIGlzTW91bnRlZH1cclxuXHJcbjxkaXYgY2xhc3M9XCJhcHBcIj5cclxuXHJcbiAgICA8ZGl2IGNsYXNzPVwibWFpbiBoZWFkZXJcIj5cclxuICAgICAgICA8YnV0dG9uIGNsYXNzPVwidGl0bGVcIiBvbjpjbGljaz17b3BlbkhvbWVwYWdlfT57c2VydmVyU2V0dGluZ3MudXJsfSAoe3NlcnZlclNldHRpbmdzLmF1dGgudXNlcm5hbWV9KTwvYnV0dG9uPlxyXG4gICAgICAgIDxidXR0b24gY2xhc3M9XCJjb250cm9scyBpY29uXCIgdGl0bGU9XCJSZWZyZXNoXCIgb246Y2xpY2s9e3JlZnJlc2hBcnRpY2xlc30+JiN4ZTk4NDs8L2J1dHRvbj5cclxuICAgIDwvZGl2PlxyXG5cclxuICAgIDxkaXYgY2xhc3M9XCJhcHAtY29udGVudFwiPlxyXG4gICAgICAgIHsjZWFjaCBhcnRpY2xlcyBhcyBhcnRpY2xlfVxyXG4gICAgICAgIDxkaXYgY2xhc3M9XCJhcnRpY2xlXCI+XHJcbiAgICAgICAgICAgIDxkaXYgY2xhc3M9XCJoZWFkZXJcIj5cclxuICAgICAgICAgICAgICAgIDxidXR0b24gY2xhc3M9XCJ0aXRsZSBub3dyYXBcIiB0aXRsZT17YXJ0aWNsZS50aXRsZX0gb246Y2xpY2s9eygpID0+IG9wZW5BcnRpY2xlKGFydGljbGUpfT57YXJ0aWNsZS50aXRsZX08L2J1dHRvbj5cclxuICAgICAgICAgICAgICAgIDxkaXYgY2xhc3M9XCJjb250cm9sc1wiPlxyXG4gICAgICAgICAgICAgICAgICAgIDxidXR0b24gY2xhc3M9XCJpY29uXCIgdGl0bGU9XCJNYXJrIGFzIHJlYWRcIiBvbjpjbGljaz17KCkgPT4gbWFya0FydGljbGVBc1JlYWQoYXJ0aWNsZSl9PiYjeGU5Y2U7PC9idXR0b24+XHJcbiAgICAgICAgICAgICAgICA8L2Rpdj5cclxuICAgICAgICAgICAgPC9kaXY+XHJcbiAgICAgICAgICAgIDxkaXYgY2xhc3M9XCJtZXRhXCI+XHJcbiAgICAgICAgICAgICAgICA8YSBocmVmPVwie2FydGljbGUub3JpZ2luLmh0bWxVcmx9XCIgY2xhc3M9XCJvcmlnaW5cIj48aW1nIHNyYz1cIntnZXRBcnRpY2xlRmF2aWNvbihhcnRpY2xlKX1cIiBhbHQ9XCJcIiAvPnthcnRpY2xlLm9yaWdpbi50aXRsZX08L2E+XHJcbiAgICAgICAgICAgICAgICA8ZGl2IGNsYXNzPVwiZGF0ZVwiPntuZXcgRGF0ZShhcnRpY2xlLnB1Ymxpc2hlZCAqIDEwMDApLnRvTG9jYWxlU3RyaW5nKCl9PC9kaXY+XHJcbiAgICAgICAgICAgIDwvZGl2PlxyXG4gICAgICAgICAgICA8ZGl2IGNsYXNzPVwiZGVzY3JpcHRpb24gbm93cmFwXCI+e3N0cmlwSHRtbChhcnRpY2xlLnN1bW1hcnkuY29udGVudCl9PC9kaXY+XHJcbiAgICAgICAgPC9kaXY+XHJcbiAgICAgICAgey9lYWNofVxyXG4gICAgPC9kaXY+XHJcblxyXG48L2Rpdj5cclxuXHJcbnsvaWZ9XHJcblxyXG48c3R5bGU+XHJcblxyXG4gICAgLmFwcCB7XHJcbiAgICAgICAgZGlzcGxheTogZmxleDtcclxuICAgICAgICBmbGV4LWRpcmVjdGlvbjogY29sdW1uO1xyXG4gICAgICAgIHdpZHRoOiAxMDAlO1xyXG4gICAgICAgIGhlaWdodDogMTAwJTtcclxuICAgICAgICBwYWRkaW5nOiAwLjVlbTtcclxuICAgICAgICBtYXgtd2lkdGg6IDQwZW07XHJcbiAgICAgICAgZm9udC1zaXplOiAwLjhlbTtcclxuICAgIH1cclxuXHJcbiAgICAuaGVhZGVyIHtcclxuICAgICAgICBkaXNwbGF5OiBmbGV4O1xyXG4gICAgICAgIGZsZXgtZGlyZWN0aW9uOiByb3c7XHJcbiAgICAgICAgZmxleDogMCAwIGF1dG87XHJcbiAgICAgICAgcGFkZGluZzogMC4yNWVtO1xyXG4gICAgICAgIGJvcmRlci1ib3R0b206IDFweCBzb2xpZCAjREREO1xyXG4gICAgfVxyXG5cclxuICAgIC5tYWluLmhlYWRlciB7XHJcbiAgICAgICAgYmFja2dyb3VuZDogIzAwNjJCRTtcclxuICAgICAgICBjb2xvcjogd2hpdGU7XHJcbiAgICB9XHJcblxyXG4gICAgLnRpdGxlIHtcclxuICAgICAgICBmbGV4OiAxIDEgYXV0bztcclxuICAgICAgICB0ZXh0LWFsaWduOiBsZWZ0O1xyXG4gICAgICAgIGRpc3BsYXk6IGZsZXg7XHJcbiAgICAgICAgYWxpZ24taXRlbXM6IGNlbnRlcjtcclxuICAgICAgICBjb2x1bW4tZ2FwOiAwLjI1ZW07XHJcbiAgICB9XHJcblxyXG4gICAgLnRpdGxlLCAub3JpZ2luIHtcclxuICAgICAgICBmb250LXdlaWdodDogNjAwO1xyXG4gICAgfVxyXG5cclxuICAgIC5vcmlnaW4gaW1nIHtcclxuICAgICAgICBoZWlnaHQ6IDFlbTtcclxuICAgIH1cclxuXHJcbiAgICAuY29udHJvbHMge1xyXG4gICAgICAgIGZsZXg6IDAgMCBhdXRvO1xyXG4gICAgfVxyXG5cclxuICAgIC5hcHAtY29udGVudCB7XHJcbiAgICAgICAgZGlzcGxheTogZmxleDtcclxuICAgICAgICBmbGV4LWRpcmVjdGlvbjogY29sdW1uO1xyXG4gICAgICAgIGZsZXg6IDEgMSBhdXRvO1xyXG4gICAgICAgIG92ZXJmbG93LXk6IGF1dG87XHJcbiAgICB9XHJcblxyXG4gICAgLmFydGljbGUge1xyXG4gICAgICAgIG1hcmdpbjogMC4yNWVtO1xyXG4gICAgICAgIHBhZGRpbmc6IDAuMjVlbTtcclxuICAgICAgICBib3JkZXI6IDFweCBzb2xpZCAjREREO1xyXG4gICAgICAgIGRpc3BsYXk6IGZsZXg7XHJcbiAgICAgICAgZmxleC1kaXJlY3Rpb246IGNvbHVtbjtcclxuICAgIH1cclxuXHJcbiAgICAuYXJ0aWNsZTpob3ZlciB7XHJcbiAgICAgICAgYmFja2dyb3VuZDogI0VFRTtcclxuICAgIH1cclxuXHJcbiAgICAuYXJ0aWNsZSA+ICoge1xyXG4gICAgICAgIGRpc3BsYXk6IGZsZXg7XHJcbiAgICAgICAgZmxleC1kaXJlY3Rpb246IHJvdztcclxuICAgICAgICBwYWRkaW5nOiAwLjFlbTtcclxuICAgICAgICBjb2x1bW4tZ2FwOiAwLjVlbTtcclxuICAgIH1cclxuXHJcbiAgICAuYXJ0aWNsZSAubWV0YSB7XHJcbiAgICAgICAgZm9udC1zdHlsZTogaXRhbGljO1xyXG4gICAgICAgIGZvbnQtc2l6ZTogMWVtO1xyXG4gICAgfVxyXG5cclxuICAgIC5hcnRpY2xlIC5tZXRhIC5vcmlnaW4ge1xyXG4gICAgICAgIGRpc3BsYXk6IGZsZXg7XHJcbiAgICAgICAgYWxpZ24taXRlbXM6IGNlbnRlcjtcclxuICAgICAgICBjb2x1bW4tZ2FwOiAwLjI1ZW07XHJcbiAgICB9XHJcblxyXG4gICAgLmFydGljbGUgLmRlc2NyaXB0aW9uIHtcclxuICAgICAgICBjb2xvcjogIzc3NztcclxuICAgICAgICBmb250LXNpemU6IDAuOGVtO1xyXG4gICAgfVxyXG5cclxuICAgIC5ub3dyYXAge1xyXG4gICAgICAgIG92ZXJmbG93OiBoaWRkZW47XHJcbiAgICAgICAgdGV4dC1vdmVyZmxvdzogZWxsaXBzaXM7XHJcbiAgICAgICAgd2hpdGUtc3BhY2U6IG5vd3JhcDtcclxuICAgICAgICBkaXNwbGF5OiBibG9jaztcclxuICAgIH1cclxuXHJcbiAgICBidXR0b24ge1xyXG4gICAgICAgIGJvcmRlcjogMDtcclxuICAgICAgICBwYWRkaW5nOiAwO1xyXG4gICAgICAgIG1hcmdpbjogMDtcclxuICAgICAgICBmb250LXNpemU6IDFlbTtcclxuICAgICAgICBiYWNrZ3JvdW5kOiB0cmFuc3BhcmVudDtcclxuICAgICAgICBjb2xvcjogaW5oZXJpdDtcclxuICAgICAgICBjdXJzb3I6IHBvaW50ZXI7XHJcbiAgICB9XHJcblxyXG4gICAgYnV0dG9uLmljb24ge1xyXG4gICAgICAgIHBhZGRpbmc6IDBlbSAwLjI1ZW07XHJcbiAgICB9XHJcblxyXG4gICAgYSB7XHJcbiAgICAgICAgY29sb3I6IGluaGVyaXQ7XHJcbiAgICAgICAgdGV4dC1kZWNvcmF0aW9uOiBub25lO1xyXG4gICAgfVxyXG5cclxuPC9zdHlsZT5cclxuXHJcbjxzY3JpcHQ+XHJcblxyXG4gICAgaW1wb3J0IHsgb25Nb3VudCB9IGZyb20gJ3N2ZWx0ZSc7XHJcbiAgICBpbXBvcnQgU2V0dGluZ3NBcGkgZnJvbSBcIi4uLy4uL3NoYXJlZC9TZXR0aW5nc0FwaVwiO1xyXG4gICAgaW1wb3J0IEZyZXNoUnNzQXBpIGZyb20gXCIuLi8uLi9zaGFyZWQvRnJlc2hSc3NBcGlcIjtcclxuICAgIFxyXG4gICAgbGV0IGlzTW91bnRlZCA9IGZhbHNlO1xyXG4gICAgbGV0IHNlcnZlclNldHRpbmdzID0gZmFsc2U7XHJcbiAgICBsZXQgYXBwU2V0dGluZ3MgPSBmYWxzZTtcclxuICAgIGxldCBmcmVzaFJzc0FwaSA9IGZhbHNlO1xyXG4gICAgbGV0IGFydGljbGVzID0gW107XHJcblxyXG4gICAgYXN5bmMgZnVuY3Rpb24gb3BlbkhvbWVwYWdlKCkge1xyXG4gICAgICAgIHdpbmRvdy5vcGVuKHNlcnZlclNldHRpbmdzLnVybCk7XHJcbiAgICAgICAgd2luZG93LmNsb3NlKCk7XHJcbiAgICB9XHJcblxyXG4gICAgYXN5bmMgZnVuY3Rpb24gcmVmcmVzaEFydGljbGVzKCkge1xyXG4gICAgICAgIGFydGljbGVzID0gW107XHJcbiAgICAgICAgYXJ0aWNsZXMgPSBhd2FpdCBmcmVzaFJzc0FwaS5nZXRBcnRpY2xlcyh7XHJcbiAgICAgICAgICAgIGNvdW50OiBhcHBTZXR0aW5ncy5hcnRpY2xlQ291bnQsXHJcbiAgICAgICAgICAgIHVucmVhZDogdHJ1ZVxyXG4gICAgICAgIH0pO1xyXG4gICAgfTtcclxuXHJcbiAgICBhc3luYyBmdW5jdGlvbiBvcGVuQXJ0aWNsZShhcnRpY2xlKSB7XHJcbiAgICAgICAgY29uc3Qgc291cmNlID0gYXJ0aWNsZS5jYW5vbmljYWxbMF0gfHwgYXJ0aWNsZS5hbHRlcm5hdGVbMF07XHJcbiAgICAgICAgd2luZG93Lm9wZW4oc291cmNlLmhyZWYpO1xyXG4gICAgICAgIGlmIChhcHBTZXR0aW5ncy5tYXJrQXNSZWFkKSB7XHJcbiAgICAgICAgICAgIGF3YWl0IG1hcmtBcnRpY2xlQXNSZWFkKGFydGljbGUpO1xyXG4gICAgICAgIH1cclxuICAgIH07XHJcblxyXG4gICAgYXN5bmMgZnVuY3Rpb24gbWFya0FydGljbGVBc1JlYWQoYXJ0aWNsZSkge1xyXG4gICAgICAgIGNvbnN0IG9sZEFydGljbGVzID0gYXJ0aWNsZXM7XHJcbiAgICAgICAgYXJ0aWNsZXMgPSBhcnRpY2xlcy5maWx0ZXIoeCA9PiB4ICE9IGFydGljbGUpO1xyXG5cclxuICAgICAgICAvLyByZXN0b3JlIHRoZSBvbGQgYXJ0aWNsZXMgaWYgdGhlIHNlcnZlci1zaWRlIG9wZXJhdGlvbiBmYWlsZWRcclxuICAgICAgICBpZiAoIWF3YWl0IGZyZXNoUnNzQXBpLm1hcmtBcnRpY2xlQXNSZWFkKGFydGljbGUuaWQpKSB7XHJcbiAgICAgICAgICAgIGFydGljbGVzID0gb2xkQXJ0aWNsZXM7XHJcbiAgICAgICAgICAgIHJldHVybjtcclxuICAgICAgICB9XHJcblxyXG4gICAgICAgIC8vIERvIGEgaGFyZCByZWZyZXNoIGlmIHdlIGRyb3AgYmVsb3cgaGFsZiB0aGUgYXJ0aWNsZSBjb3VudFxyXG4gICAgICAgIGlmIChhcnRpY2xlcy5sZW5ndGggPCBhcHBTZXR0aW5ncy5hcnRpY2xlQ291bnQgLyAyKSB7XHJcbiAgICAgICAgICAgIGF3YWl0IHJlZnJlc2hBcnRpY2xlcygpO1xyXG4gICAgICAgIH1cclxuICAgIH07XHJcblxyXG4gICAgZnVuY3Rpb24gZ2V0QXJ0aWNsZVVybChhcnRpY2xlKSB7XHJcbiAgICAgICAgY29uc3Qgc291cmNlID0gYXJ0aWNsZS5jYW5vbmljYWxbMF0gfHwgYXJ0aWNsZS5hbHRlcm5hdGVbMF07XHJcbiAgICAgICAgcmV0dXJuIHNvdXJjZS5ocmVmO1xyXG4gICAgfVxyXG5cclxuICAgIGZ1bmN0aW9uIGdldEFydGljbGVGYXZpY29uKGFydGljbGUpIHtcclxuICAgICAgICBjb25zdCBocmVmID0gZ2V0QXJ0aWNsZVVybChhcnRpY2xlKTtcclxuICAgICAgICBjb25zdCB1cmwgPSBuZXcgVVJMKGhyZWYpO1xyXG4gICAgICAgIHJldHVybiBgJHt1cmwub3JpZ2lufS9mYXZpY29uLmljb2A7XHJcbiAgICB9XHJcblxyXG4gICAgZnVuY3Rpb24gc3RyaXBIdG1sKHRleHQpIHtcclxuICAgICAgICBjb25zdCBlbG0gPSBkb2N1bWVudC5jcmVhdGVFbGVtZW50KFwiZGl2XCIpO1xyXG4gICAgICAgIGVsbS5pbm5lckhUTUwgPSB0ZXh0O1xyXG4gICAgICAgIHJldHVybiBlbG0udGV4dENvbnRlbnQ7XHJcbiAgICB9XHJcblxyXG4gICAgb25Nb3VudChhc3luYyAoKSA9PiB7XHJcbiAgICAgICAgY29uc3Qgc2V0dGluZ3NBcGkgPSBuZXcgU2V0dGluZ3NBcGkoKTtcclxuXHJcbiAgICAgICAgc2VydmVyU2V0dGluZ3MgPSBhd2FpdCBzZXR0aW5nc0FwaS5sb2FkU2VydmVyU2V0dGluZ3MoKTtcclxuICAgICAgICBhcHBTZXR0aW5ncyA9IGF3YWl0IHNldHRpbmdzQXBpLmxvYWRBcHBTZXR0aW5ncygpO1xyXG4gICAgICAgIGZyZXNoUnNzQXBpID0gbmV3IEZyZXNoUnNzQXBpKHNlcnZlclNldHRpbmdzKTtcclxuXHJcbiAgICAgICAgcmVmcmVzaEFydGljbGVzKCk7XHJcblxyXG4gICAgICAgIGlzTW91bnRlZCA9IHRydWU7XHJcbiAgICB9KTtcclxuXHJcbjwvc2NyaXB0PiJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFpQ0ksSUFBSSw4QkFBQyxDQUFDLEFBQ0YsT0FBTyxDQUFFLElBQUksQ0FDYixjQUFjLENBQUUsTUFBTSxDQUN0QixLQUFLLENBQUUsSUFBSSxDQUNYLE1BQU0sQ0FBRSxJQUFJLENBQ1osT0FBTyxDQUFFLEtBQUssQ0FDZCxTQUFTLENBQUUsSUFBSSxDQUNmLFNBQVMsQ0FBRSxLQUFLLEFBQ3BCLENBQUMsQUFFRCxPQUFPLDhCQUFDLENBQUMsQUFDTCxPQUFPLENBQUUsSUFBSSxDQUNiLGNBQWMsQ0FBRSxHQUFHLENBQ25CLElBQUksQ0FBRSxDQUFDLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FDZCxPQUFPLENBQUUsTUFBTSxDQUNmLGFBQWEsQ0FBRSxHQUFHLENBQUMsS0FBSyxDQUFDLElBQUksQUFDakMsQ0FBQyxBQUVELEtBQUssT0FBTyw4QkFBQyxDQUFDLEFBQ1YsVUFBVSxDQUFFLE9BQU8sQ0FDbkIsS0FBSyxDQUFFLEtBQUssQUFDaEIsQ0FBQyxBQUVELE1BQU0sOEJBQUMsQ0FBQyxBQUNKLElBQUksQ0FBRSxDQUFDLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FDZCxVQUFVLENBQUUsSUFBSSxDQUNoQixPQUFPLENBQUUsSUFBSSxDQUNiLFdBQVcsQ0FBRSxNQUFNLENBQ25CLFVBQVUsQ0FBRSxNQUFNLEFBQ3RCLENBQUMsQUFFRCxvQ0FBTSxDQUFFLE9BQU8sOEJBQUMsQ0FBQyxBQUNiLFdBQVcsQ0FBRSxHQUFHLEFBQ3BCLENBQUMsQUFFRCxzQkFBTyxDQUFDLEdBQUcsZUFBQyxDQUFDLEFBQ1QsTUFBTSxDQUFFLEdBQUcsQUFDZixDQUFDLEFBRUQsU0FBUyw4QkFBQyxDQUFDLEFBQ1AsSUFBSSxDQUFFLENBQUMsQ0FBQyxDQUFDLENBQUMsSUFBSSxBQUNsQixDQUFDLEFBRUQsWUFBWSw4QkFBQyxDQUFDLEFBQ1YsT0FBTyxDQUFFLElBQUksQ0FDYixjQUFjLENBQUUsTUFBTSxDQUN0QixJQUFJLENBQUUsQ0FBQyxDQUFDLENBQUMsQ0FBQyxJQUFJLENBQ2QsVUFBVSxDQUFFLElBQUksQUFDcEIsQ0FBQyxBQUVELFFBQVEsOEJBQUMsQ0FBQyxBQUNOLE1BQU0sQ0FBRSxNQUFNLENBQ2QsT0FBTyxDQUFFLE1BQU0sQ0FDZixNQUFNLENBQUUsR0FBRyxDQUFDLEtBQUssQ0FBQyxJQUFJLENBQ3RCLE9BQU8sQ0FBRSxJQUFJLENBQ2IsY0FBYyxDQUFFLE1BQU0sQUFDMUIsQ0FBQyxBQUVELHNDQUFRLE1BQU0sQUFBQyxDQUFDLEFBQ1osVUFBVSxDQUFFLElBQUksQUFDcEIsQ0FBQyxBQUVELHVCQUFRLENBQUcsZUFBRSxDQUFDLEFBQ1YsT0FBTyxDQUFFLElBQUksQ0FDYixjQUFjLENBQUUsR0FBRyxDQUNuQixPQUFPLENBQUUsS0FBSyxDQUNkLFVBQVUsQ0FBRSxLQUFLLEFBQ3JCLENBQUMsQUFFRCx1QkFBUSxDQUFDLEtBQUssZUFBQyxDQUFDLEFBQ1osVUFBVSxDQUFFLE1BQU0sQ0FDbEIsU0FBUyxDQUFFLEdBQUcsQUFDbEIsQ0FBQyxBQUVELHVCQUFRLENBQUMsS0FBSyxDQUFDLE9BQU8sZUFBQyxDQUFDLEFBQ3BCLE9BQU8sQ0FBRSxJQUFJLENBQ2IsV0FBVyxDQUFFLE1BQU0sQ0FDbkIsVUFBVSxDQUFFLE1BQU0sQUFDdEIsQ0FBQyxBQUVELHVCQUFRLENBQUMsWUFBWSxlQUFDLENBQUMsQUFDbkIsS0FBSyxDQUFFLElBQUksQ0FDWCxTQUFTLENBQUUsS0FBSyxBQUNwQixDQUFDLEFBRUQsT0FBTyw4QkFBQyxDQUFDLEFBQ0wsUUFBUSxDQUFFLE1BQU0sQ0FDaEIsYUFBYSxDQUFFLFFBQVEsQ0FDdkIsV0FBVyxDQUFFLE1BQU0sQ0FDbkIsT0FBTyxDQUFFLEtBQUssQUFDbEIsQ0FBQyxBQUVELE1BQU0sOEJBQUMsQ0FBQyxBQUNKLE1BQU0sQ0FBRSxDQUFDLENBQ1QsT0FBTyxDQUFFLENBQUMsQ0FDVixNQUFNLENBQUUsQ0FBQyxDQUNULFNBQVMsQ0FBRSxHQUFHLENBQ2QsVUFBVSxDQUFFLFdBQVcsQ0FDdkIsS0FBSyxDQUFFLE9BQU8sQ0FDZCxNQUFNLENBQUUsT0FBTyxBQUNuQixDQUFDLEFBRUQsTUFBTSxLQUFLLDhCQUFDLENBQUMsQUFDVCxPQUFPLENBQUUsR0FBRyxDQUFDLE1BQU0sQUFDdkIsQ0FBQyxBQUVELENBQUMsOEJBQUMsQ0FBQyxBQUNDLEtBQUssQ0FBRSxPQUFPLENBQ2QsZUFBZSxDQUFFLElBQUksQUFDekIsQ0FBQyJ9 */");
+	append_styles(target, "svelte-1a2k4ni", ".app.svelte-1a2k4ni.svelte-1a2k4ni{display:flex;flex-direction:column;width:100%;height:100%;padding:0.5em;max-width:40em;font-size:0.8em}.header.svelte-1a2k4ni.svelte-1a2k4ni{display:flex;flex-direction:row;flex:0 0 auto;padding:0.25em;border-bottom:1px solid #DDD}.main.header.svelte-1a2k4ni.svelte-1a2k4ni{background:#0062BE;color:white}.title.svelte-1a2k4ni.svelte-1a2k4ni{flex:1 1 auto;text-align:left;display:flex;align-items:center;column-gap:0.25em}.title.svelte-1a2k4ni.svelte-1a2k4ni,.origin.svelte-1a2k4ni.svelte-1a2k4ni{font-weight:600}.origin.svelte-1a2k4ni img.svelte-1a2k4ni{height:1em}.controls.svelte-1a2k4ni.svelte-1a2k4ni{flex:0 0 auto}.app-content.svelte-1a2k4ni.svelte-1a2k4ni{display:flex;flex-direction:column;flex:1 1 auto;overflow-y:auto}.article.svelte-1a2k4ni.svelte-1a2k4ni{margin:0.25em;padding:0.25em;border:1px solid #DDD;display:flex;flex-direction:column}.article.svelte-1a2k4ni.svelte-1a2k4ni:hover{background:#EEE}.article.svelte-1a2k4ni>.svelte-1a2k4ni{display:flex;flex-direction:row;padding:0.1em;column-gap:0.5em}.article.svelte-1a2k4ni .meta.svelte-1a2k4ni{font-style:italic;font-size:1em}.article.svelte-1a2k4ni .meta .origin.svelte-1a2k4ni{display:flex;align-items:center;column-gap:0.25em}.article.svelte-1a2k4ni .description.svelte-1a2k4ni{color:#777;font-size:0.8em}.nowrap.svelte-1a2k4ni.svelte-1a2k4ni{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}button.svelte-1a2k4ni.svelte-1a2k4ni{border:0;padding:0;margin:0;font-size:1em;background:transparent;color:inherit;cursor:pointer}button.icon.svelte-1a2k4ni.svelte-1a2k4ni{padding:0em 0.25em}a.svelte-1a2k4ni.svelte-1a2k4ni{color:inherit;text-decoration:none}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiQXBwLnN2ZWx0ZSIsInNvdXJjZXMiOlsiQXBwLnN2ZWx0ZSJdLCJzb3VyY2VzQ29udGVudCI6WyJ7I2lmIGlzTW91bnRlZH1cclxuXHJcbjxkaXYgY2xhc3M9XCJhcHBcIj5cclxuXHJcbiAgICA8ZGl2IGNsYXNzPVwibWFpbiBoZWFkZXJcIj5cclxuICAgICAgICA8YnV0dG9uIGNsYXNzPVwidGl0bGVcIiBvbjpjbGljaz17b3BlbkhvbWVwYWdlfT57c2VydmVyU2V0dGluZ3MudXJsfSAoe3NlcnZlclNldHRpbmdzLmF1dGgudXNlcm5hbWV9KTwvYnV0dG9uPlxyXG4gICAgICAgIDxidXR0b24gY2xhc3M9XCJjb250cm9scyBpY29uXCIgdGl0bGU9XCJSZWZyZXNoXCIgb246Y2xpY2s9e3JlZnJlc2hBcnRpY2xlc30+JiN4ZTk4NDs8L2J1dHRvbj5cclxuICAgIDwvZGl2PlxyXG5cclxuICAgIDxkaXYgY2xhc3M9XCJhcHAtY29udGVudFwiPlxyXG4gICAgICAgIHsjZWFjaCBhcnRpY2xlcyBhcyBhcnRpY2xlfVxyXG4gICAgICAgIDxkaXYgY2xhc3M9XCJhcnRpY2xlXCI+XHJcbiAgICAgICAgICAgIDxkaXYgY2xhc3M9XCJoZWFkZXJcIj5cclxuICAgICAgICAgICAgICAgIDxidXR0b24gY2xhc3M9XCJ0aXRsZSBub3dyYXBcIiB0aXRsZT17YXJ0aWNsZS50aXRsZX0gb246Y2xpY2s9eygpID0+IG9wZW5BcnRpY2xlKGFydGljbGUpfT57YXJ0aWNsZS50aXRsZX08L2J1dHRvbj5cclxuICAgICAgICAgICAgICAgIDxkaXYgY2xhc3M9XCJjb250cm9sc1wiPlxyXG4gICAgICAgICAgICAgICAgICAgIDxidXR0b24gY2xhc3M9XCJpY29uXCIgdGl0bGU9XCJNYXJrIGFzIHJlYWRcIiBvbjpjbGljaz17KCkgPT4gcmVhZEFydGljbGUoYXJ0aWNsZSl9PiYjeGU5Y2U7PC9idXR0b24+XHJcbiAgICAgICAgICAgICAgICA8L2Rpdj5cclxuICAgICAgICAgICAgPC9kaXY+XHJcbiAgICAgICAgICAgIDxkaXYgY2xhc3M9XCJtZXRhXCI+XHJcbiAgICAgICAgICAgICAgICA8YSBocmVmPVwie2FydGljbGUub3JpZ2luLmh0bWxVcmx9XCIgY2xhc3M9XCJvcmlnaW5cIj48aW1nIHNyYz1cIntnZXRBcnRpY2xlRmF2aWNvbihhcnRpY2xlKX1cIiBhbHQ9XCJcIiAvPnthcnRpY2xlLm9yaWdpbi50aXRsZX08L2E+XHJcbiAgICAgICAgICAgICAgICA8ZGl2IGNsYXNzPVwiZGF0ZVwiPntuZXcgRGF0ZShhcnRpY2xlLnB1Ymxpc2hlZCAqIDEwMDApLnRvTG9jYWxlU3RyaW5nKCl9PC9kaXY+XHJcbiAgICAgICAgICAgIDwvZGl2PlxyXG4gICAgICAgICAgICA8ZGl2IGNsYXNzPVwiZGVzY3JpcHRpb24gbm93cmFwXCI+e3N0cmlwSHRtbChhcnRpY2xlLnN1bW1hcnkuY29udGVudCl9PC9kaXY+XHJcbiAgICAgICAgPC9kaXY+XHJcbiAgICAgICAgey9lYWNofVxyXG4gICAgPC9kaXY+XHJcblxyXG48L2Rpdj5cclxuXHJcbnsvaWZ9XHJcblxyXG48c3R5bGU+XHJcblxyXG4gICAgLmFwcCB7XHJcbiAgICAgICAgZGlzcGxheTogZmxleDtcclxuICAgICAgICBmbGV4LWRpcmVjdGlvbjogY29sdW1uO1xyXG4gICAgICAgIHdpZHRoOiAxMDAlO1xyXG4gICAgICAgIGhlaWdodDogMTAwJTtcclxuICAgICAgICBwYWRkaW5nOiAwLjVlbTtcclxuICAgICAgICBtYXgtd2lkdGg6IDQwZW07XHJcbiAgICAgICAgZm9udC1zaXplOiAwLjhlbTtcclxuICAgIH1cclxuXHJcbiAgICAuaGVhZGVyIHtcclxuICAgICAgICBkaXNwbGF5OiBmbGV4O1xyXG4gICAgICAgIGZsZXgtZGlyZWN0aW9uOiByb3c7XHJcbiAgICAgICAgZmxleDogMCAwIGF1dG87XHJcbiAgICAgICAgcGFkZGluZzogMC4yNWVtO1xyXG4gICAgICAgIGJvcmRlci1ib3R0b206IDFweCBzb2xpZCAjREREO1xyXG4gICAgfVxyXG5cclxuICAgIC5tYWluLmhlYWRlciB7XHJcbiAgICAgICAgYmFja2dyb3VuZDogIzAwNjJCRTtcclxuICAgICAgICBjb2xvcjogd2hpdGU7XHJcbiAgICB9XHJcblxyXG4gICAgLnRpdGxlIHtcclxuICAgICAgICBmbGV4OiAxIDEgYXV0bztcclxuICAgICAgICB0ZXh0LWFsaWduOiBsZWZ0O1xyXG4gICAgICAgIGRpc3BsYXk6IGZsZXg7XHJcbiAgICAgICAgYWxpZ24taXRlbXM6IGNlbnRlcjtcclxuICAgICAgICBjb2x1bW4tZ2FwOiAwLjI1ZW07XHJcbiAgICB9XHJcblxyXG4gICAgLnRpdGxlLCAub3JpZ2luIHtcclxuICAgICAgICBmb250LXdlaWdodDogNjAwO1xyXG4gICAgfVxyXG5cclxuICAgIC5vcmlnaW4gaW1nIHtcclxuICAgICAgICBoZWlnaHQ6IDFlbTtcclxuICAgIH1cclxuXHJcbiAgICAuY29udHJvbHMge1xyXG4gICAgICAgIGZsZXg6IDAgMCBhdXRvO1xyXG4gICAgfVxyXG5cclxuICAgIC5hcHAtY29udGVudCB7XHJcbiAgICAgICAgZGlzcGxheTogZmxleDtcclxuICAgICAgICBmbGV4LWRpcmVjdGlvbjogY29sdW1uO1xyXG4gICAgICAgIGZsZXg6IDEgMSBhdXRvO1xyXG4gICAgICAgIG92ZXJmbG93LXk6IGF1dG87XHJcbiAgICB9XHJcblxyXG4gICAgLmFydGljbGUge1xyXG4gICAgICAgIG1hcmdpbjogMC4yNWVtO1xyXG4gICAgICAgIHBhZGRpbmc6IDAuMjVlbTtcclxuICAgICAgICBib3JkZXI6IDFweCBzb2xpZCAjREREO1xyXG4gICAgICAgIGRpc3BsYXk6IGZsZXg7XHJcbiAgICAgICAgZmxleC1kaXJlY3Rpb246IGNvbHVtbjtcclxuICAgIH1cclxuXHJcbiAgICAuYXJ0aWNsZTpob3ZlciB7XHJcbiAgICAgICAgYmFja2dyb3VuZDogI0VFRTtcclxuICAgIH1cclxuXHJcbiAgICAuYXJ0aWNsZSA+ICoge1xyXG4gICAgICAgIGRpc3BsYXk6IGZsZXg7XHJcbiAgICAgICAgZmxleC1kaXJlY3Rpb246IHJvdztcclxuICAgICAgICBwYWRkaW5nOiAwLjFlbTtcclxuICAgICAgICBjb2x1bW4tZ2FwOiAwLjVlbTtcclxuICAgIH1cclxuXHJcbiAgICAuYXJ0aWNsZSAubWV0YSB7XHJcbiAgICAgICAgZm9udC1zdHlsZTogaXRhbGljO1xyXG4gICAgICAgIGZvbnQtc2l6ZTogMWVtO1xyXG4gICAgfVxyXG5cclxuICAgIC5hcnRpY2xlIC5tZXRhIC5vcmlnaW4ge1xyXG4gICAgICAgIGRpc3BsYXk6IGZsZXg7XHJcbiAgICAgICAgYWxpZ24taXRlbXM6IGNlbnRlcjtcclxuICAgICAgICBjb2x1bW4tZ2FwOiAwLjI1ZW07XHJcbiAgICB9XHJcblxyXG4gICAgLmFydGljbGUgLmRlc2NyaXB0aW9uIHtcclxuICAgICAgICBjb2xvcjogIzc3NztcclxuICAgICAgICBmb250LXNpemU6IDAuOGVtO1xyXG4gICAgfVxyXG5cclxuICAgIC5ub3dyYXAge1xyXG4gICAgICAgIG92ZXJmbG93OiBoaWRkZW47XHJcbiAgICAgICAgdGV4dC1vdmVyZmxvdzogZWxsaXBzaXM7XHJcbiAgICAgICAgd2hpdGUtc3BhY2U6IG5vd3JhcDtcclxuICAgICAgICBkaXNwbGF5OiBibG9jaztcclxuICAgIH1cclxuXHJcbiAgICBidXR0b24ge1xyXG4gICAgICAgIGJvcmRlcjogMDtcclxuICAgICAgICBwYWRkaW5nOiAwO1xyXG4gICAgICAgIG1hcmdpbjogMDtcclxuICAgICAgICBmb250LXNpemU6IDFlbTtcclxuICAgICAgICBiYWNrZ3JvdW5kOiB0cmFuc3BhcmVudDtcclxuICAgICAgICBjb2xvcjogaW5oZXJpdDtcclxuICAgICAgICBjdXJzb3I6IHBvaW50ZXI7XHJcbiAgICB9XHJcblxyXG4gICAgYnV0dG9uLmljb24ge1xyXG4gICAgICAgIHBhZGRpbmc6IDBlbSAwLjI1ZW07XHJcbiAgICB9XHJcblxyXG4gICAgYSB7XHJcbiAgICAgICAgY29sb3I6IGluaGVyaXQ7XHJcbiAgICAgICAgdGV4dC1kZWNvcmF0aW9uOiBub25lO1xyXG4gICAgfVxyXG5cclxuPC9zdHlsZT5cclxuXHJcbjxzY3JpcHQ+XHJcblxyXG4gICAgaW1wb3J0IHsgb25Nb3VudCB9IGZyb20gJ3N2ZWx0ZSc7XHJcbiAgICBpbXBvcnQgeyBnZXRBcnRpY2xlRmF2aWNvbiB9IGZyb20gJy4uLy4uL3NoYXJlZC91dGlscyc7XHJcbiAgICBpbXBvcnQgT3BlbkFydGljbGVBY3Rpb24gZnJvbSAnLi4vLi4vc2hhcmVkL2FjdGlvbnMvT3BlbkFydGljbGVBY3Rpb24nO1xyXG4gICAgaW1wb3J0IFJlYWRBcnRpY2xlQWN0aW9uIGZyb20gJy4uLy4uL3NoYXJlZC9hY3Rpb25zL1JlYWRBcnRpY2xlQWN0aW9uJztcclxuICAgIFxyXG4gICAgZXhwb3J0IGxldCBmcmVzaFJzc1NlcnZpY2U7XHJcbiAgICBleHBvcnQgbGV0IGFwcFNldHRpbmdzU2VydmljZTtcclxuICAgIGV4cG9ydCBsZXQgc2VydmVyU2V0dGluZ3NTZXJ2aWNlO1xyXG4gICAgXHJcbiAgICBsZXQgaXNNb3VudGVkID0gZmFsc2U7XHJcbiAgICBsZXQgc2VydmVyU2V0dGluZ3MgPSBmYWxzZTtcclxuICAgIGxldCBhcHBTZXR0aW5ncyA9IGZhbHNlO1xyXG4gICAgbGV0IGFydGljbGVzID0gW107XHJcblxyXG4gICAgJDogb3BlbkFydGljbGVBY3Rpb24gPSBuZXcgT3BlbkFydGljbGVBY3Rpb24oYXBwU2V0dGluZ3NTZXJ2aWNlLCBmcmVzaFJzc1NlcnZpY2UpO1xyXG4gICAgJDogcmVhZEFydGljbGVBY3Rpb24gPSBuZXcgUmVhZEFydGljbGVBY3Rpb24oZnJlc2hSc3NTZXJ2aWNlKTtcclxuXHJcbiAgICBhc3luYyBmdW5jdGlvbiBvcGVuSG9tZXBhZ2UoKSB7XHJcbiAgICAgICAgd2luZG93Lm9wZW4oc2VydmVyU2V0dGluZ3MudXJsKTtcclxuICAgICAgICB3aW5kb3cuY2xvc2UoKTtcclxuICAgIH1cclxuXHJcbiAgICBhc3luYyBmdW5jdGlvbiByZWZyZXNoQXJ0aWNsZXMoKSB7XHJcbiAgICAgICAgYXJ0aWNsZXMgPSBbXTtcclxuICAgICAgICBhcnRpY2xlcyA9IGF3YWl0IGZyZXNoUnNzU2VydmljZS5nZXRBcnRpY2xlcyh7XHJcbiAgICAgICAgICAgIGNvdW50OiBhcHBTZXR0aW5ncy5hcnRpY2xlQ291bnQsXHJcbiAgICAgICAgICAgIHVucmVhZDogdHJ1ZVxyXG4gICAgICAgIH0pO1xyXG4gICAgfTtcclxuXHJcbiAgICBhc3luYyBmdW5jdGlvbiBvcGVuQXJ0aWNsZShhcnRpY2xlKSB7XHJcbiAgICAgICAgaWYgKGFwcFNldHRpbmdzLm1hcmtBc1JlYWQpIHtcclxuICAgICAgICAgICAgYXJ0aWNsZXMgPSBhcnRpY2xlcy5maWx0ZXIoeCA9PiB4ICE9IGFydGljbGUpO1xyXG4gICAgICAgIH1cclxuICAgICAgICBhd2FpdCBvcGVuQXJ0aWNsZUFjdGlvbi5ydW4oYXJ0aWNsZSk7XHJcbiAgICB9XHJcblxyXG4gICAgYXN5bmMgZnVuY3Rpb24gcmVhZEFydGljbGUoYXJ0aWNsZSkge1xyXG4gICAgICAgIGF3YWl0IHJlYWRBcnRpY2xlQWN0aW9uLnJ1bihhcnRpY2xlKTtcclxuICAgIH1cclxuXHJcbiAgICBmdW5jdGlvbiBzdHJpcEh0bWwodGV4dCkge1xyXG4gICAgICAgIGNvbnN0IGVsbSA9IGRvY3VtZW50LmNyZWF0ZUVsZW1lbnQoXCJkaXZcIik7XHJcbiAgICAgICAgZWxtLmlubmVySFRNTCA9IHRleHQ7XHJcbiAgICAgICAgcmV0dXJuIGVsbS50ZXh0Q29udGVudDtcclxuICAgIH1cclxuXHJcbiAgICBvbk1vdW50KGFzeW5jICgpID0+IHtcclxuICAgICAgICBzZXJ2ZXJTZXR0aW5ncyA9IGF3YWl0IHNlcnZlclNldHRpbmdzU2VydmljZS5sb2FkKCk7XHJcbiAgICAgICAgYXBwU2V0dGluZ3MgPSBhd2FpdCBhcHBTZXR0aW5nc1NlcnZpY2UubG9hZCgpO1xyXG5cclxuICAgICAgICByZWZyZXNoQXJ0aWNsZXMoKTtcclxuXHJcbiAgICAgICAgaXNNb3VudGVkID0gdHJ1ZTtcclxuICAgIH0pO1xyXG5cclxuPC9zY3JpcHQ+Il0sIm5hbWVzIjpbXSwibWFwcGluZ3MiOiJBQWlDSSxJQUFJLDhCQUFDLENBQUMsQUFDRixPQUFPLENBQUUsSUFBSSxDQUNiLGNBQWMsQ0FBRSxNQUFNLENBQ3RCLEtBQUssQ0FBRSxJQUFJLENBQ1gsTUFBTSxDQUFFLElBQUksQ0FDWixPQUFPLENBQUUsS0FBSyxDQUNkLFNBQVMsQ0FBRSxJQUFJLENBQ2YsU0FBUyxDQUFFLEtBQUssQUFDcEIsQ0FBQyxBQUVELE9BQU8sOEJBQUMsQ0FBQyxBQUNMLE9BQU8sQ0FBRSxJQUFJLENBQ2IsY0FBYyxDQUFFLEdBQUcsQ0FDbkIsSUFBSSxDQUFFLENBQUMsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUNkLE9BQU8sQ0FBRSxNQUFNLENBQ2YsYUFBYSxDQUFFLEdBQUcsQ0FBQyxLQUFLLENBQUMsSUFBSSxBQUNqQyxDQUFDLEFBRUQsS0FBSyxPQUFPLDhCQUFDLENBQUMsQUFDVixVQUFVLENBQUUsT0FBTyxDQUNuQixLQUFLLENBQUUsS0FBSyxBQUNoQixDQUFDLEFBRUQsTUFBTSw4QkFBQyxDQUFDLEFBQ0osSUFBSSxDQUFFLENBQUMsQ0FBQyxDQUFDLENBQUMsSUFBSSxDQUNkLFVBQVUsQ0FBRSxJQUFJLENBQ2hCLE9BQU8sQ0FBRSxJQUFJLENBQ2IsV0FBVyxDQUFFLE1BQU0sQ0FDbkIsVUFBVSxDQUFFLE1BQU0sQUFDdEIsQ0FBQyxBQUVELG9DQUFNLENBQUUsT0FBTyw4QkFBQyxDQUFDLEFBQ2IsV0FBVyxDQUFFLEdBQUcsQUFDcEIsQ0FBQyxBQUVELHNCQUFPLENBQUMsR0FBRyxlQUFDLENBQUMsQUFDVCxNQUFNLENBQUUsR0FBRyxBQUNmLENBQUMsQUFFRCxTQUFTLDhCQUFDLENBQUMsQUFDUCxJQUFJLENBQUUsQ0FBQyxDQUFDLENBQUMsQ0FBQyxJQUFJLEFBQ2xCLENBQUMsQUFFRCxZQUFZLDhCQUFDLENBQUMsQUFDVixPQUFPLENBQUUsSUFBSSxDQUNiLGNBQWMsQ0FBRSxNQUFNLENBQ3RCLElBQUksQ0FBRSxDQUFDLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FDZCxVQUFVLENBQUUsSUFBSSxBQUNwQixDQUFDLEFBRUQsUUFBUSw4QkFBQyxDQUFDLEFBQ04sTUFBTSxDQUFFLE1BQU0sQ0FDZCxPQUFPLENBQUUsTUFBTSxDQUNmLE1BQU0sQ0FBRSxHQUFHLENBQUMsS0FBSyxDQUFDLElBQUksQ0FDdEIsT0FBTyxDQUFFLElBQUksQ0FDYixjQUFjLENBQUUsTUFBTSxBQUMxQixDQUFDLEFBRUQsc0NBQVEsTUFBTSxBQUFDLENBQUMsQUFDWixVQUFVLENBQUUsSUFBSSxBQUNwQixDQUFDLEFBRUQsdUJBQVEsQ0FBRyxlQUFFLENBQUMsQUFDVixPQUFPLENBQUUsSUFBSSxDQUNiLGNBQWMsQ0FBRSxHQUFHLENBQ25CLE9BQU8sQ0FBRSxLQUFLLENBQ2QsVUFBVSxDQUFFLEtBQUssQUFDckIsQ0FBQyxBQUVELHVCQUFRLENBQUMsS0FBSyxlQUFDLENBQUMsQUFDWixVQUFVLENBQUUsTUFBTSxDQUNsQixTQUFTLENBQUUsR0FBRyxBQUNsQixDQUFDLEFBRUQsdUJBQVEsQ0FBQyxLQUFLLENBQUMsT0FBTyxlQUFDLENBQUMsQUFDcEIsT0FBTyxDQUFFLElBQUksQ0FDYixXQUFXLENBQUUsTUFBTSxDQUNuQixVQUFVLENBQUUsTUFBTSxBQUN0QixDQUFDLEFBRUQsdUJBQVEsQ0FBQyxZQUFZLGVBQUMsQ0FBQyxBQUNuQixLQUFLLENBQUUsSUFBSSxDQUNYLFNBQVMsQ0FBRSxLQUFLLEFBQ3BCLENBQUMsQUFFRCxPQUFPLDhCQUFDLENBQUMsQUFDTCxRQUFRLENBQUUsTUFBTSxDQUNoQixhQUFhLENBQUUsUUFBUSxDQUN2QixXQUFXLENBQUUsTUFBTSxDQUNuQixPQUFPLENBQUUsS0FBSyxBQUNsQixDQUFDLEFBRUQsTUFBTSw4QkFBQyxDQUFDLEFBQ0osTUFBTSxDQUFFLENBQUMsQ0FDVCxPQUFPLENBQUUsQ0FBQyxDQUNWLE1BQU0sQ0FBRSxDQUFDLENBQ1QsU0FBUyxDQUFFLEdBQUcsQ0FDZCxVQUFVLENBQUUsV0FBVyxDQUN2QixLQUFLLENBQUUsT0FBTyxDQUNkLE1BQU0sQ0FBRSxPQUFPLEFBQ25CLENBQUMsQUFFRCxNQUFNLEtBQUssOEJBQUMsQ0FBQyxBQUNULE9BQU8sQ0FBRSxHQUFHLENBQUMsTUFBTSxBQUN2QixDQUFDLEFBRUQsQ0FBQyw4QkFBQyxDQUFDLEFBQ0MsS0FBSyxDQUFFLE9BQU8sQ0FDZCxlQUFlLENBQUUsSUFBSSxBQUN6QixDQUFDIn0= */");
 }
 
 function get_each_context(ctx, list, i) {
 	const child_ctx = ctx.slice();
-	child_ctx[11] = list[i];
+	child_ctx[15] = list[i];
 	return child_ctx;
 }
 
@@ -656,7 +573,7 @@ function create_if_block(ctx) {
 			if (dirty & /*serverSettings*/ 2 && t0_value !== (t0_value = /*serverSettings*/ ctx[1].url + "")) set_data_dev(t0, t0_value);
 			if (dirty & /*serverSettings*/ 2 && t2_value !== (t2_value = /*serverSettings*/ ctx[1].auth.username + "")) set_data_dev(t2, t2_value);
 
-			if (dirty & /*stripHtml, articles, Date, getArticleFavicon, markArticleAsRead, openArticle*/ 100) {
+			if (dirty & /*stripHtml, articles, Date, getArticleFavicon, readArticle, openArticle*/ 100) {
 				each_value = /*articles*/ ctx[2];
 				validate_each_argument(each_value);
 				let i;
@@ -704,7 +621,7 @@ function create_each_block(ctx) {
 	let div5;
 	let div1;
 	let button0;
-	let t0_value = /*article*/ ctx[11].title + "";
+	let t0_value = /*article*/ ctx[15].title + "";
 	let t0;
 	let button0_title_value;
 	let t1;
@@ -715,27 +632,27 @@ function create_each_block(ctx) {
 	let a;
 	let img;
 	let img_src_value;
-	let t4_value = /*article*/ ctx[11].origin.title + "";
+	let t4_value = /*article*/ ctx[15].origin.title + "";
 	let t4;
 	let a_href_value;
 	let t5;
 	let div2;
-	let t6_value = new Date(/*article*/ ctx[11].published * 1000).toLocaleString() + "";
+	let t6_value = new Date(/*article*/ ctx[15].published * 1000).toLocaleString() + "";
 	let t6;
 	let t7;
 	let div4;
-	let t8_value = stripHtml(/*article*/ ctx[11].summary.content) + "";
+	let t8_value = stripHtml(/*article*/ ctx[15].summary.content) + "";
 	let t8;
 	let t9;
 	let mounted;
 	let dispose;
 
 	function click_handler() {
-		return /*click_handler*/ ctx[7](/*article*/ ctx[11]);
+		return /*click_handler*/ ctx[10](/*article*/ ctx[15]);
 	}
 
 	function click_handler_1() {
-		return /*click_handler_1*/ ctx[8](/*article*/ ctx[11]);
+		return /*click_handler_1*/ ctx[11](/*article*/ ctx[15]);
 	}
 
 	const block = {
@@ -761,7 +678,7 @@ function create_each_block(ctx) {
 			t8 = text(t8_value);
 			t9 = space();
 			attr_dev(button0, "class", "title nowrap svelte-1a2k4ni");
-			attr_dev(button0, "title", button0_title_value = /*article*/ ctx[11].title);
+			attr_dev(button0, "title", button0_title_value = /*article*/ ctx[15].title);
 			add_location(button0, file, 13, 16, 452);
 			attr_dev(button1, "class", "icon svelte-1a2k4ni");
 			attr_dev(button1, "title", "Mark as read");
@@ -770,19 +687,19 @@ function create_each_block(ctx) {
 			add_location(div0, file, 14, 16, 583);
 			attr_dev(div1, "class", "header svelte-1a2k4ni");
 			add_location(div1, file, 12, 12, 414);
-			if (!src_url_equal(img.src, img_src_value = getArticleFavicon(/*article*/ ctx[11]))) attr_dev(img, "src", img_src_value);
+			if (!src_url_equal(img.src, img_src_value = getArticleFavicon(/*article*/ ctx[15]))) attr_dev(img, "src", img_src_value);
 			attr_dev(img, "alt", "");
 			attr_dev(img, "class", "svelte-1a2k4ni");
-			add_location(img, file, 19, 66, 874);
-			attr_dev(a, "href", a_href_value = /*article*/ ctx[11].origin.htmlUrl);
+			add_location(img, file, 19, 66, 868);
+			attr_dev(a, "href", a_href_value = /*article*/ ctx[15].origin.htmlUrl);
 			attr_dev(a, "class", "origin svelte-1a2k4ni");
-			add_location(a, file, 19, 16, 824);
+			add_location(a, file, 19, 16, 818);
 			attr_dev(div2, "class", "date");
-			add_location(div2, file, 20, 16, 967);
+			add_location(div2, file, 20, 16, 961);
 			attr_dev(div3, "class", "meta svelte-1a2k4ni");
-			add_location(div3, file, 18, 12, 788);
+			add_location(div3, file, 18, 12, 782);
 			attr_dev(div4, "class", "description nowrap svelte-1a2k4ni");
-			add_location(div4, file, 22, 12, 1078);
+			add_location(div4, file, 22, 12, 1072);
 			attr_dev(div5, "class", "article svelte-1a2k4ni");
 			add_location(div5, file, 11, 8, 379);
 		},
@@ -818,24 +735,24 @@ function create_each_block(ctx) {
 		},
 		p: function update(new_ctx, dirty) {
 			ctx = new_ctx;
-			if (dirty & /*articles*/ 4 && t0_value !== (t0_value = /*article*/ ctx[11].title + "")) set_data_dev(t0, t0_value);
+			if (dirty & /*articles*/ 4 && t0_value !== (t0_value = /*article*/ ctx[15].title + "")) set_data_dev(t0, t0_value);
 
-			if (dirty & /*articles*/ 4 && button0_title_value !== (button0_title_value = /*article*/ ctx[11].title)) {
+			if (dirty & /*articles*/ 4 && button0_title_value !== (button0_title_value = /*article*/ ctx[15].title)) {
 				attr_dev(button0, "title", button0_title_value);
 			}
 
-			if (dirty & /*articles*/ 4 && !src_url_equal(img.src, img_src_value = getArticleFavicon(/*article*/ ctx[11]))) {
+			if (dirty & /*articles*/ 4 && !src_url_equal(img.src, img_src_value = getArticleFavicon(/*article*/ ctx[15]))) {
 				attr_dev(img, "src", img_src_value);
 			}
 
-			if (dirty & /*articles*/ 4 && t4_value !== (t4_value = /*article*/ ctx[11].origin.title + "")) set_data_dev(t4, t4_value);
+			if (dirty & /*articles*/ 4 && t4_value !== (t4_value = /*article*/ ctx[15].origin.title + "")) set_data_dev(t4, t4_value);
 
-			if (dirty & /*articles*/ 4 && a_href_value !== (a_href_value = /*article*/ ctx[11].origin.htmlUrl)) {
+			if (dirty & /*articles*/ 4 && a_href_value !== (a_href_value = /*article*/ ctx[15].origin.htmlUrl)) {
 				attr_dev(a, "href", a_href_value);
 			}
 
-			if (dirty & /*articles*/ 4 && t6_value !== (t6_value = new Date(/*article*/ ctx[11].published * 1000).toLocaleString() + "")) set_data_dev(t6, t6_value);
-			if (dirty & /*articles*/ 4 && t8_value !== (t8_value = stripHtml(/*article*/ ctx[11].summary.content) + "")) set_data_dev(t8, t8_value);
+			if (dirty & /*articles*/ 4 && t6_value !== (t6_value = new Date(/*article*/ ctx[15].published * 1000).toLocaleString() + "")) set_data_dev(t6, t6_value);
+			if (dirty & /*articles*/ 4 && t8_value !== (t8_value = stripHtml(/*article*/ ctx[15].summary.content) + "")) set_data_dev(t8, t8_value);
 		},
 		d: function destroy(detaching) {
 			if (detaching) detach_dev(div5);
@@ -904,17 +821,6 @@ function create_fragment(ctx) {
 	return block;
 }
 
-function getArticleUrl(article) {
-	const source = article.canonical[0] || article.alternate[0];
-	return source.href;
-}
-
-function getArticleFavicon(article) {
-	const href = getArticleUrl(article);
-	const url = new URL(href);
-	return `${url.origin}/favicon.ico`;
-}
-
 function stripHtml(text) {
 	const elm = document.createElement("div");
 	elm.innerHTML = text;
@@ -922,12 +828,16 @@ function stripHtml(text) {
 }
 
 function instance($$self, $$props, $$invalidate) {
+	let openArticleAction;
+	let readArticleAction;
 	let { $$slots: slots = {}, $$scope } = $$props;
 	validate_slots('App', slots, []);
+	let { freshRssService } = $$props;
+	let { appSettingsService } = $$props;
+	let { serverSettingsService } = $$props;
 	let isMounted = false;
 	let serverSettings = false;
 	let appSettings = false;
-	let freshRssApi = false;
 	let articles = [];
 
 	async function openHomepage() {
@@ -938,84 +848,106 @@ function instance($$self, $$props, $$invalidate) {
 	async function refreshArticles() {
 		$$invalidate(2, articles = []);
 
-		$$invalidate(2, articles = await freshRssApi.getArticles({
+		$$invalidate(2, articles = await freshRssService.getArticles({
 			count: appSettings.articleCount,
 			unread: true
 		}));
 	}
 
 	async function openArticle(article) {
-		const source = article.canonical[0] || article.alternate[0];
-		window.open(source.href);
-
 		if (appSettings.markAsRead) {
-			await markArticleAsRead(article);
+			$$invalidate(2, articles = articles.filter(x => x != article));
 		}
+
+		await openArticleAction.run(article);
 	}
 
-	async function markArticleAsRead(article) {
-		const oldArticles = articles;
-		$$invalidate(2, articles = articles.filter(x => x != article));
-
-		// restore the old articles if the server-side operation failed
-		if (!await freshRssApi.markArticleAsRead(article.id)) {
-			$$invalidate(2, articles = oldArticles);
-			return;
-		}
-
-		// Do a hard refresh if we drop below half the article count
-		if (articles.length < appSettings.articleCount / 2) {
-			await refreshArticles();
-		}
+	async function readArticle(article) {
+		await readArticleAction.run(article);
 	}
 
 	onMount(async () => {
-		const settingsApi = new SettingsApi();
-		$$invalidate(1, serverSettings = await settingsApi.loadServerSettings());
-		appSettings = await settingsApi.loadAppSettings();
-		freshRssApi = new FreshRssApi(serverSettings);
+		$$invalidate(1, serverSettings = await serverSettingsService.load());
+		appSettings = await appSettingsService.load();
 		refreshArticles();
 		$$invalidate(0, isMounted = true);
 	});
 
-	const writable_props = [];
+	$$self.$$.on_mount.push(function () {
+		if (freshRssService === undefined && !('freshRssService' in $$props || $$self.$$.bound[$$self.$$.props['freshRssService']])) {
+			console.warn("<App> was created without expected prop 'freshRssService'");
+		}
+
+		if (appSettingsService === undefined && !('appSettingsService' in $$props || $$self.$$.bound[$$self.$$.props['appSettingsService']])) {
+			console.warn("<App> was created without expected prop 'appSettingsService'");
+		}
+
+		if (serverSettingsService === undefined && !('serverSettingsService' in $$props || $$self.$$.bound[$$self.$$.props['serverSettingsService']])) {
+			console.warn("<App> was created without expected prop 'serverSettingsService'");
+		}
+	});
+
+	const writable_props = ['freshRssService', 'appSettingsService', 'serverSettingsService'];
 
 	Object.keys($$props).forEach(key => {
 		if (!~writable_props.indexOf(key) && key.slice(0, 2) !== '$$' && key !== 'slot') console.warn(`<App> was created with unknown prop '${key}'`);
 	});
 
 	const click_handler = article => openArticle(article);
-	const click_handler_1 = article => markArticleAsRead(article);
+	const click_handler_1 = article => readArticle(article);
+
+	$$self.$$set = $$props => {
+		if ('freshRssService' in $$props) $$invalidate(7, freshRssService = $$props.freshRssService);
+		if ('appSettingsService' in $$props) $$invalidate(8, appSettingsService = $$props.appSettingsService);
+		if ('serverSettingsService' in $$props) $$invalidate(9, serverSettingsService = $$props.serverSettingsService);
+	};
 
 	$$self.$capture_state = () => ({
 		onMount,
-		SettingsApi,
-		FreshRssApi,
+		getArticleFavicon,
+		OpenArticleAction,
+		ReadArticleAction,
+		freshRssService,
+		appSettingsService,
+		serverSettingsService,
 		isMounted,
 		serverSettings,
 		appSettings,
-		freshRssApi,
 		articles,
 		openHomepage,
 		refreshArticles,
 		openArticle,
-		markArticleAsRead,
-		getArticleUrl,
-		getArticleFavicon,
-		stripHtml
+		readArticle,
+		stripHtml,
+		readArticleAction,
+		openArticleAction
 	});
 
 	$$self.$inject_state = $$props => {
+		if ('freshRssService' in $$props) $$invalidate(7, freshRssService = $$props.freshRssService);
+		if ('appSettingsService' in $$props) $$invalidate(8, appSettingsService = $$props.appSettingsService);
+		if ('serverSettingsService' in $$props) $$invalidate(9, serverSettingsService = $$props.serverSettingsService);
 		if ('isMounted' in $$props) $$invalidate(0, isMounted = $$props.isMounted);
 		if ('serverSettings' in $$props) $$invalidate(1, serverSettings = $$props.serverSettings);
 		if ('appSettings' in $$props) appSettings = $$props.appSettings;
-		if ('freshRssApi' in $$props) freshRssApi = $$props.freshRssApi;
 		if ('articles' in $$props) $$invalidate(2, articles = $$props.articles);
+		if ('readArticleAction' in $$props) readArticleAction = $$props.readArticleAction;
+		if ('openArticleAction' in $$props) openArticleAction = $$props.openArticleAction;
 	};
 
 	if ($$props && "$$inject" in $$props) {
 		$$self.$inject_state($$props.$$inject);
 	}
+
+	$$self.$$.update = () => {
+		if ($$self.$$.dirty & /*appSettingsService, freshRssService*/ 384) {
+			openArticleAction = new OpenArticleAction(appSettingsService, freshRssService);
+		}
+
+		if ($$self.$$.dirty & /*freshRssService*/ 128) {
+			readArticleAction = new ReadArticleAction(freshRssService);
+		}
+	};
 
 	return [
 		isMounted,
@@ -1024,7 +956,10 @@ function instance($$self, $$props, $$invalidate) {
 		openHomepage,
 		refreshArticles,
 		openArticle,
-		markArticleAsRead,
+		readArticle,
+		freshRssService,
+		appSettingsService,
+		serverSettingsService,
 		click_handler,
 		click_handler_1
 	];
@@ -1033,7 +968,20 @@ function instance($$self, $$props, $$invalidate) {
 class App extends SvelteComponentDev {
 	constructor(options) {
 		super(options);
-		init(this, options, instance, create_fragment, safe_not_equal, {}, add_css);
+
+		init(
+			this,
+			options,
+			instance,
+			create_fragment,
+			safe_not_equal,
+			{
+				freshRssService: 7,
+				appSettingsService: 8,
+				serverSettingsService: 9
+			},
+			add_css
+		);
 
 		dispatch_dev("SvelteRegisterComponent", {
 			component: this,
@@ -1042,4 +990,675 @@ class App extends SvelteComponentDev {
 			id: create_fragment.name
 		});
 	}
-}new App({ target: document.body });
+
+	get freshRssService() {
+		throw new Error("<App>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+	}
+
+	set freshRssService(value) {
+		throw new Error("<App>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+	}
+
+	get appSettingsService() {
+		throw new Error("<App>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+	}
+
+	set appSettingsService(value) {
+		throw new Error("<App>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+	}
+
+	get serverSettingsService() {
+		throw new Error("<App>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+	}
+
+	set serverSettingsService(value) {
+		throw new Error("<App>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+	}
+}var domain;
+
+// This constructor is used to store event handlers. Instantiating this is
+// faster than explicitly calling `Object.create(null)` to get a "clean" empty
+// object (tested with v8 v4.9).
+function EventHandlers() {}
+EventHandlers.prototype = Object.create(null);
+
+function EventEmitter() {
+  EventEmitter.init.call(this);
+}
+
+// nodejs oddity
+// require('events') === require('events').EventEmitter
+EventEmitter.EventEmitter = EventEmitter;
+
+EventEmitter.usingDomains = false;
+
+EventEmitter.prototype.domain = undefined;
+EventEmitter.prototype._events = undefined;
+EventEmitter.prototype._maxListeners = undefined;
+
+// By default EventEmitters will print a warning if more than 10 listeners are
+// added to it. This is a useful default which helps finding memory leaks.
+EventEmitter.defaultMaxListeners = 10;
+
+EventEmitter.init = function() {
+  this.domain = null;
+  if (EventEmitter.usingDomains) {
+    // if there is an active domain, then attach to it.
+    if (domain.active ) ;
+  }
+
+  if (!this._events || this._events === Object.getPrototypeOf(this)._events) {
+    this._events = new EventHandlers();
+    this._eventsCount = 0;
+  }
+
+  this._maxListeners = this._maxListeners || undefined;
+};
+
+// Obviously not all Emitters should be limited to 10. This function allows
+// that to be increased. Set to zero for unlimited.
+EventEmitter.prototype.setMaxListeners = function setMaxListeners(n) {
+  if (typeof n !== 'number' || n < 0 || isNaN(n))
+    throw new TypeError('"n" argument must be a positive number');
+  this._maxListeners = n;
+  return this;
+};
+
+function $getMaxListeners(that) {
+  if (that._maxListeners === undefined)
+    return EventEmitter.defaultMaxListeners;
+  return that._maxListeners;
+}
+
+EventEmitter.prototype.getMaxListeners = function getMaxListeners() {
+  return $getMaxListeners(this);
+};
+
+// These standalone emit* functions are used to optimize calling of event
+// handlers for fast cases because emit() itself often has a variable number of
+// arguments and can be deoptimized because of that. These functions always have
+// the same number of arguments and thus do not get deoptimized, so the code
+// inside them can execute faster.
+function emitNone(handler, isFn, self) {
+  if (isFn)
+    handler.call(self);
+  else {
+    var len = handler.length;
+    var listeners = arrayClone(handler, len);
+    for (var i = 0; i < len; ++i)
+      listeners[i].call(self);
+  }
+}
+function emitOne(handler, isFn, self, arg1) {
+  if (isFn)
+    handler.call(self, arg1);
+  else {
+    var len = handler.length;
+    var listeners = arrayClone(handler, len);
+    for (var i = 0; i < len; ++i)
+      listeners[i].call(self, arg1);
+  }
+}
+function emitTwo(handler, isFn, self, arg1, arg2) {
+  if (isFn)
+    handler.call(self, arg1, arg2);
+  else {
+    var len = handler.length;
+    var listeners = arrayClone(handler, len);
+    for (var i = 0; i < len; ++i)
+      listeners[i].call(self, arg1, arg2);
+  }
+}
+function emitThree(handler, isFn, self, arg1, arg2, arg3) {
+  if (isFn)
+    handler.call(self, arg1, arg2, arg3);
+  else {
+    var len = handler.length;
+    var listeners = arrayClone(handler, len);
+    for (var i = 0; i < len; ++i)
+      listeners[i].call(self, arg1, arg2, arg3);
+  }
+}
+
+function emitMany(handler, isFn, self, args) {
+  if (isFn)
+    handler.apply(self, args);
+  else {
+    var len = handler.length;
+    var listeners = arrayClone(handler, len);
+    for (var i = 0; i < len; ++i)
+      listeners[i].apply(self, args);
+  }
+}
+
+EventEmitter.prototype.emit = function emit(type) {
+  var er, handler, len, args, i, events, domain;
+  var doError = (type === 'error');
+
+  events = this._events;
+  if (events)
+    doError = (doError && events.error == null);
+  else if (!doError)
+    return false;
+
+  domain = this.domain;
+
+  // If there is no 'error' event listener then throw.
+  if (doError) {
+    er = arguments[1];
+    if (domain) {
+      if (!er)
+        er = new Error('Uncaught, unspecified "error" event');
+      er.domainEmitter = this;
+      er.domain = domain;
+      er.domainThrown = false;
+      domain.emit('error', er);
+    } else if (er instanceof Error) {
+      throw er; // Unhandled 'error' event
+    } else {
+      // At least give some kind of context to the user
+      var err = new Error('Uncaught, unspecified "error" event. (' + er + ')');
+      err.context = er;
+      throw err;
+    }
+    return false;
+  }
+
+  handler = events[type];
+
+  if (!handler)
+    return false;
+
+  var isFn = typeof handler === 'function';
+  len = arguments.length;
+  switch (len) {
+    // fast cases
+    case 1:
+      emitNone(handler, isFn, this);
+      break;
+    case 2:
+      emitOne(handler, isFn, this, arguments[1]);
+      break;
+    case 3:
+      emitTwo(handler, isFn, this, arguments[1], arguments[2]);
+      break;
+    case 4:
+      emitThree(handler, isFn, this, arguments[1], arguments[2], arguments[3]);
+      break;
+    // slower
+    default:
+      args = new Array(len - 1);
+      for (i = 1; i < len; i++)
+        args[i - 1] = arguments[i];
+      emitMany(handler, isFn, this, args);
+  }
+
+  return true;
+};
+
+function _addListener(target, type, listener, prepend) {
+  var m;
+  var events;
+  var existing;
+
+  if (typeof listener !== 'function')
+    throw new TypeError('"listener" argument must be a function');
+
+  events = target._events;
+  if (!events) {
+    events = target._events = new EventHandlers();
+    target._eventsCount = 0;
+  } else {
+    // To avoid recursion in the case that type === "newListener"! Before
+    // adding it to the listeners, first emit "newListener".
+    if (events.newListener) {
+      target.emit('newListener', type,
+                  listener.listener ? listener.listener : listener);
+
+      // Re-assign `events` because a newListener handler could have caused the
+      // this._events to be assigned to a new object
+      events = target._events;
+    }
+    existing = events[type];
+  }
+
+  if (!existing) {
+    // Optimize the case of one listener. Don't need the extra array object.
+    existing = events[type] = listener;
+    ++target._eventsCount;
+  } else {
+    if (typeof existing === 'function') {
+      // Adding the second element, need to change to array.
+      existing = events[type] = prepend ? [listener, existing] :
+                                          [existing, listener];
+    } else {
+      // If we've already got an array, just append.
+      if (prepend) {
+        existing.unshift(listener);
+      } else {
+        existing.push(listener);
+      }
+    }
+
+    // Check for listener leak
+    if (!existing.warned) {
+      m = $getMaxListeners(target);
+      if (m && m > 0 && existing.length > m) {
+        existing.warned = true;
+        var w = new Error('Possible EventEmitter memory leak detected. ' +
+                            existing.length + ' ' + type + ' listeners added. ' +
+                            'Use emitter.setMaxListeners() to increase limit');
+        w.name = 'MaxListenersExceededWarning';
+        w.emitter = target;
+        w.type = type;
+        w.count = existing.length;
+        emitWarning(w);
+      }
+    }
+  }
+
+  return target;
+}
+function emitWarning(e) {
+  typeof console.warn === 'function' ? console.warn(e) : console.log(e);
+}
+EventEmitter.prototype.addListener = function addListener(type, listener) {
+  return _addListener(this, type, listener, false);
+};
+
+EventEmitter.prototype.on = EventEmitter.prototype.addListener;
+
+EventEmitter.prototype.prependListener =
+    function prependListener(type, listener) {
+      return _addListener(this, type, listener, true);
+    };
+
+function _onceWrap(target, type, listener) {
+  var fired = false;
+  function g() {
+    target.removeListener(type, g);
+    if (!fired) {
+      fired = true;
+      listener.apply(target, arguments);
+    }
+  }
+  g.listener = listener;
+  return g;
+}
+
+EventEmitter.prototype.once = function once(type, listener) {
+  if (typeof listener !== 'function')
+    throw new TypeError('"listener" argument must be a function');
+  this.on(type, _onceWrap(this, type, listener));
+  return this;
+};
+
+EventEmitter.prototype.prependOnceListener =
+    function prependOnceListener(type, listener) {
+      if (typeof listener !== 'function')
+        throw new TypeError('"listener" argument must be a function');
+      this.prependListener(type, _onceWrap(this, type, listener));
+      return this;
+    };
+
+// emits a 'removeListener' event iff the listener was removed
+EventEmitter.prototype.removeListener =
+    function removeListener(type, listener) {
+      var list, events, position, i, originalListener;
+
+      if (typeof listener !== 'function')
+        throw new TypeError('"listener" argument must be a function');
+
+      events = this._events;
+      if (!events)
+        return this;
+
+      list = events[type];
+      if (!list)
+        return this;
+
+      if (list === listener || (list.listener && list.listener === listener)) {
+        if (--this._eventsCount === 0)
+          this._events = new EventHandlers();
+        else {
+          delete events[type];
+          if (events.removeListener)
+            this.emit('removeListener', type, list.listener || listener);
+        }
+      } else if (typeof list !== 'function') {
+        position = -1;
+
+        for (i = list.length; i-- > 0;) {
+          if (list[i] === listener ||
+              (list[i].listener && list[i].listener === listener)) {
+            originalListener = list[i].listener;
+            position = i;
+            break;
+          }
+        }
+
+        if (position < 0)
+          return this;
+
+        if (list.length === 1) {
+          list[0] = undefined;
+          if (--this._eventsCount === 0) {
+            this._events = new EventHandlers();
+            return this;
+          } else {
+            delete events[type];
+          }
+        } else {
+          spliceOne(list, position);
+        }
+
+        if (events.removeListener)
+          this.emit('removeListener', type, originalListener || listener);
+      }
+
+      return this;
+    };
+    
+// Alias for removeListener added in NodeJS 10.0
+// https://nodejs.org/api/events.html#events_emitter_off_eventname_listener
+EventEmitter.prototype.off = function(type, listener){
+    return this.removeListener(type, listener);
+};
+
+EventEmitter.prototype.removeAllListeners =
+    function removeAllListeners(type) {
+      var listeners, events;
+
+      events = this._events;
+      if (!events)
+        return this;
+
+      // not listening for removeListener, no need to emit
+      if (!events.removeListener) {
+        if (arguments.length === 0) {
+          this._events = new EventHandlers();
+          this._eventsCount = 0;
+        } else if (events[type]) {
+          if (--this._eventsCount === 0)
+            this._events = new EventHandlers();
+          else
+            delete events[type];
+        }
+        return this;
+      }
+
+      // emit removeListener for all listeners on all events
+      if (arguments.length === 0) {
+        var keys = Object.keys(events);
+        for (var i = 0, key; i < keys.length; ++i) {
+          key = keys[i];
+          if (key === 'removeListener') continue;
+          this.removeAllListeners(key);
+        }
+        this.removeAllListeners('removeListener');
+        this._events = new EventHandlers();
+        this._eventsCount = 0;
+        return this;
+      }
+
+      listeners = events[type];
+
+      if (typeof listeners === 'function') {
+        this.removeListener(type, listeners);
+      } else if (listeners) {
+        // LIFO order
+        do {
+          this.removeListener(type, listeners[listeners.length - 1]);
+        } while (listeners[0]);
+      }
+
+      return this;
+    };
+
+EventEmitter.prototype.listeners = function listeners(type) {
+  var evlistener;
+  var ret;
+  var events = this._events;
+
+  if (!events)
+    ret = [];
+  else {
+    evlistener = events[type];
+    if (!evlistener)
+      ret = [];
+    else if (typeof evlistener === 'function')
+      ret = [evlistener.listener || evlistener];
+    else
+      ret = unwrapListeners(evlistener);
+  }
+
+  return ret;
+};
+
+EventEmitter.listenerCount = function(emitter, type) {
+  if (typeof emitter.listenerCount === 'function') {
+    return emitter.listenerCount(type);
+  } else {
+    return listenerCount.call(emitter, type);
+  }
+};
+
+EventEmitter.prototype.listenerCount = listenerCount;
+function listenerCount(type) {
+  var events = this._events;
+
+  if (events) {
+    var evlistener = events[type];
+
+    if (typeof evlistener === 'function') {
+      return 1;
+    } else if (evlistener) {
+      return evlistener.length;
+    }
+  }
+
+  return 0;
+}
+
+EventEmitter.prototype.eventNames = function eventNames() {
+  return this._eventsCount > 0 ? Reflect.ownKeys(this._events) : [];
+};
+
+// About 1.5x faster than the two-arg version of Array#splice().
+function spliceOne(list, index) {
+  for (var i = index, k = i + 1, n = list.length; k < n; i += 1, k += 1)
+    list[i] = list[k];
+  list.pop();
+}
+
+function arrayClone(arr, i) {
+  var copy = new Array(i);
+  while (i--)
+    copy[i] = arr[i];
+  return copy;
+}
+
+function unwrapListeners(arr) {
+  var ret = new Array(arr.length);
+  for (var i = 0; i < ret.length; ++i) {
+    ret[i] = arr[i].listener || arr[i];
+  }
+  return ret;
+}class BaseSettingsService extends EventEmitter {
+
+    constructor(key) {
+        super();
+        this.key = key;
+
+        browser.storage.onChanged.addListener((changes, areaName) => {
+            if (areaName != "local") return;
+            if (!(this.key in changes)) return;
+            this.emit("update", changes[this.key]);
+        });
+    }
+
+    async load() {
+        return (await browser.storage.local.get({ [this.key]: {
+            url: "localhost",
+            auth: {
+                username: "admin",
+                apiPassword: "test"
+            }
+        }}))[this.key];
+    }
+
+    async save(settings) {
+        await browser.storage.local.set({ [this.key]: settings });
+    }
+
+}class ApplicationSettingsService extends BaseSettingsService {
+
+    constructor() {
+        super("application");
+    }
+
+}class ServerSettingsService extends BaseSettingsService {
+
+    constructor() {
+        super("server");
+    }
+
+}const tags = {
+    read: "user/-/state/com.google/read",
+    star: "user/-/state/com.google/starred"
+};
+
+class FreshRssService {
+
+    constructor(serverSettingsService) {
+        this.serverSettingsService = serverSettingsService;
+        this.reset();
+        this.serverSettingsService.addListener("change", () => this.reset());
+    }
+
+    reset() {
+        this.options = null;
+        this.auth = null;
+        this.token = null;
+    }
+
+    get baseUrl() {
+        return `${this.options.url}/api/greader.php`;
+    }
+
+    get authUrl() {
+        return `${this.baseUrl}/accounts/ClientLogin?Email=${encodeURIComponent(this.options.auth.username)}&Passwd=${encodeURIComponent(this.options.auth.apiPassword)}`;
+    }
+
+    async testConnection() {
+        await this.initialize();
+
+        const response = await fetch(this.baseUrl);
+
+        return {
+            success: response.ok,
+            status: response.status,
+            statusText: response.statusText
+        };
+    }
+
+    async testAuthentication() {
+        await this.initialize();
+
+        const response = await fetch(this.authUrl);
+        const val = this.getAuthValue(await response.text());
+
+        return {
+            success: response.ok && val,
+            status: response.status,
+            statusText: response.statusText
+        };
+    }
+
+    async initialize() {
+        if (this.options == null) {
+            this.options = await this.serverSettingsService.load();
+        }
+    }
+
+    async authenticate() {
+        await this.initialize();
+
+        if (this.auth == null) {
+            const response = await fetch(this.authUrl);
+            this.auth = this.getAuthValue(await response.text());
+        }
+    }
+
+    async authenticateToken() {
+        await this.authenticate();
+
+        if (this.token == null) {
+            const requestUrl = `${this.baseUrl}/reader/api/0/token`;
+            const response = await fetch(requestUrl, { headers: this.getAuthHeaders() });
+            const text = await response.text();
+            this.token = text.trim();
+        }
+    }
+
+    async getArticles(options) {
+        await this.authenticate();
+
+        const requestParams = new URLSearchParams();
+        if (options.count) requestParams.append("n", options.count);
+        if (options.unread) requestParams.append("xt", tags.read);
+        if (options.startDate) requestParams.append("ot", Math.round(options.startDate.getTime() / 1000));
+        if (options.endDate) requestParams.append("nt", Math.round(options.endDate.getTime() / 1000));
+
+        const requestUrl = `${this.baseUrl}/reader/api/0/stream/contents/reading-list?${requestParams.toString()}`;
+        const response = await fetch(requestUrl, { headers: this.getAuthHeaders() });
+        const json = await response.json();
+        return json.items;
+    }
+
+    async markArticleAsRead(articleId) {
+        await this.authenticateToken();
+
+        const body = new URLSearchParams();
+        body.append("a", tags.read);
+        body.append("i", articleId);
+        body.append("T", this.token);
+
+        const requestUrl = `${this.baseUrl}/reader/api/0/edit-tag`;
+        const response = await fetch(requestUrl, { method: "POST", headers: this.getAuthHeaders(), body });
+        return response.ok;
+    }
+
+    async getUnreadCount() {
+        await this.authenticate();
+        const requestUrl = `${this.baseUrl}/reader/api/0/unread-count?output=json`;
+        const response = await fetch(requestUrl, { headers: this.getAuthHeaders() });
+        const json = await response.json();
+        return json.max;
+    }
+
+    getAuthValue(text) {
+        const lines = text.split('\n');
+        const auth = lines.find(x => x.startsWith("Auth="));
+        const val = auth.split("=", 2);
+        return val[1];
+    }
+
+    getAuthHeaders() {
+        return {
+            "Authorization": `GoogleLogin auth=${this.auth}`
+        }
+    }
+
+}const appSettingsService = new ApplicationSettingsService();
+const serverSettingsService = new ServerSettingsService();
+const freshRssService = new FreshRssService(serverSettingsService);
+
+new App({ 
+    target: document.body,
+    props: {
+        appSettingsService,
+        serverSettingsService,
+        freshRssService
+    }
+});
