@@ -1,0 +1,27 @@
+{
+    "name": "fresh-rss-alerts",
+    "version": "1.0.0",
+    "description": "Alerts for Fresh RSS",
+    "scripts": {
+        "dev": "rollup -cw",
+        "build": "rollup -c"
+    },
+    "repository": "https://github.com/BartVanBeurden/FreshRssAlerts",
+    "keywords": [],
+    "author": {
+        "name": "Bart Van Beurden",
+        "email": "vanbeurden.bart@gmail.com"
+    },
+    "license": "WTFPL",
+    "devDependencies": {
+        "@rollup/plugin-commonjs": "^22.0.2",
+        "@rollup/plugin-json": "^4.1.0",
+        "@rollup/plugin-node-resolve": "^13.3.0",
+        "cross-env": "^7.0.3",
+        "rollup": "^2.77.2",
+        "rollup-plugin-svelte": "^7.1.0",
+        "svelte": "^3.49.0",
+        "svelte-check": "^2.8.0",
+        "svelte-preprocess": "^4.10.7"
+    }
+}
