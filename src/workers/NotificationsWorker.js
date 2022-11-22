@@ -19,7 +19,7 @@ export default class NotificationsWorker {
 
         this.articles = await freshRssApi.getArticles({
             unread: true,
-            since: this.date
+            startDate: this.date
         });
     
         this.date = new Date();

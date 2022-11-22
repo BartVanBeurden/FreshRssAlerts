@@ -2,7 +2,8 @@
     "manifest_version": 2,
     "name": "FreshRssAlerts",
     "version": "1.0",
-  
+    "author": "Bart Van Beurden",
+
     "description": "Provides alerts for Fresh RSS servers",
   
     "icons": {

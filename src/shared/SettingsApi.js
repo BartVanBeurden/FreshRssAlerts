@@ -20,7 +20,7 @@ export default class SettingsApi {
     async loadAppSettings() {
         return (await browser.storage.local.get({ "application": {
             pollingInterval: 10,
-            articleCount: 8,
+            articleCount: 20,
             markAsRead: true
         }})).application;
     }

@@ -20,7 +20,7 @@
     async loadAppSettings() {
         return (await browser.storage.local.get({ "application": {
             pollingInterval: 10,
-            articleCount: 8,
+            articleCount: 20,
             markAsRead: true
         }})).application;
     }
@@ -94,7 +94,8 @@ class FreshRssApi {
         const requestParams = new URLSearchParams();
         if (options.count) requestParams.append("n", options.count);
         if (options.unread) requestParams.append("xt", tags.read);
-        if (options.since) requestParams.append("ck", options.since.getTime());
+        if (options.startDate) requestParams.append("ot", Math.round(options.startDate.getTime() / 1000));
+        if (options.endDate) requestParams.append("nt", Math.round(options.endDate.getTime() / 1000));
 
         const requestUrl = `${this.baseUrl}/reader/api/0/stream/contents/reading-list?${requestParams.toString()}`;
         const response = await fetch(requestUrl, { headers: this.getAuthHeaders() });
@@ -186,7 +187,7 @@ class FreshRssApi {
 
         this.articles = await freshRssApi.getArticles({
             unread: true,
-            since: this.date
+            startDate: this.date
         });
     
         this.date = new Date();
